@@ -1,0 +1,6 @@
+# 맥 개발 환경(로컬)에서 확인한 버전. B경로(transformers·torch)는 Colab 에서 돌린다.
+pymupdf==1.28.2
+pillow==12.3.0
+paddlepaddle==3.3.1
+paddleocr==3.7.0
+# Colab(T4)에서만: transformers accelerate torch (노트북 설치 셀이 설치한다)
