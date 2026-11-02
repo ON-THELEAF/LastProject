@@ -11,7 +11,7 @@
 
 ## 시스템 구조
 
-그림: [`docs/프로그램_구조도.excalidraw`](docs/프로그램_구조도.excalidraw) (VS Code Excalidraw 확장으로 열기)
+그림: [`docs/프로그램 구조도 (11.2).png`](<docs/프로그램 구조도 (11.2).png>) · 고치려면 [`docs/프로그램 구조도(11.2).excalidraw`](<docs/프로그램 구조도(11.2).excalidraw>) (VS Code Excalidraw 확장으로 열기)
 
 ```
 화면 frontend/  →  백엔드 pipeline/desktop/service.py  →  엔진 pipeline/bridgedocs.py  →  모델 models/
