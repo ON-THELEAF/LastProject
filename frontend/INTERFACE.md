@@ -1,6 +1,6 @@
 # 화면 ↔ 기능 약속 (INTERFACE)
 
-화면(`frontend/`)은 `DesktopService`(진짜) 또는 `FakeService`(연습용, GPU·모델 없이 동작)만 부릅니다. `bridgedocs.py`를 직접 부르지 않습니다.
+화면(`frontend/`)은 `DesktopService`만 부릅니다. `bridgedocs.py`를 직접 부르지 않습니다.
 오류는 모두 **화면에 그대로 보여 줄 수 있는 한국어 문구의 `ValueError`** 로 옵니다.
 
 ## 시작
@@ -9,8 +9,8 @@
 import sys; sys.path.insert(0, "pipeline")
 from desktop import offline
 models = offline.setup_offline(offline.app_base())   # torch·paddle을 불러오기 전에
-from desktop.service import DesktopService            # 개발 중에는 from desktop.fake import FakeService
-svc = DesktopService(models)                           # FakeService(delay=0.3)
+from desktop.service import DesktopService
+svc = DesktopService(models)
 ```
 
 ## 1. 문서 읽기

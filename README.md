@@ -6,8 +6,7 @@
 
 ## 실행
 
-- 소스로(GPU PC): `python frontend\app.py` (`--fake`면 GPU 없이 예시 결과로 연습, `--selfcheck`면 화면 없이 점검)
-- 테스트: `pipeline/` 폴더에서 `python -m pytest ../frontend/tests desktop/tests -q`
+- 소스로(GPU PC): `python frontend\app.py`
 - 엔진만 명령줄로: `python pipeline/bridgedocs.py run 문서.pdf …` / `make 데이터.csv` — [`pipeline/README.md`](pipeline/README.md)
 
 ## 시스템 구조
@@ -32,7 +31,7 @@
 | 폴더/파일 | 내용 |
 |---|---|
 | `frontend/` | 화면: `app.py`(창·탭), `read_tab.py`(문서 읽기, 임시판), `make_tab.py`(문서 만들기), `INTERFACE.md`(약속) |
-| `pipeline/desktop/` | 백엔드: `service.py`(화면이 부르는 유일한 입구), `fake.py`(GPU 없는 연습용), `worker.py`(작업 스레드), `export.py`(검사·내보내기), `offline.py`(인터넷 차단·모델 위치), `selfcheck.py` |
+| `pipeline/desktop/` | 백엔드: `service.py`(화면이 부르는 유일한 입구), `worker.py`(작업 스레드), `export.py`(검사·내보내기), `offline.py`(인터넷 차단·모델 위치) |
 | `pipeline/bridgedocs.py` | 엔진 전체(읽기 1~3단계, 문서 만들기, 실험 도구) |
 | `docs/` | 프로그램 구조도 |
 | `models/` | AI 모델(약 9GB, 저장소에 안 올림) |

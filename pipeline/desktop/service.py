@@ -3,7 +3,7 @@
 시작 순서(화면 쪽):
     from desktop import offline
     models = offline.setup_offline(offline.app_base())   # torch·paddle을 불러오기 전에
-    from desktop.service import DesktopService             # 개발 중에는 desktop.fake.FakeService
+    from desktop.service import DesktopService
     svc = DesktopService(models)
 
 오류는 화면에 그대로 보여 줄 수 있는 한국어 문구의 ValueError로 알린다.
