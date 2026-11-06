@@ -1,7 +1,7 @@
-"""문서 읽기 탭(임시): 파일 넣기 → 묶음 확인 → 읽기(대기열·취소) → 문서별 확인 → 내보내기.
+"""문서 읽기 화면(피그마 디자인): 파일 넣기 → 묶음 확인 → 읽기(대기열·취소) → 문서별 확인 → 내보내기.
 
 화면은 DesktopService만 부른다. 오류는 서비스가 주는 한국어 문구를 그대로 보여 준다.
-shortcut: 화면 담당 팀원의 정식 탭이 오기 전까지 쓰는 최소 화면. 확대·축소는 없다.
+shortcut: 확대·축소·쪽 넘기기 버튼은 없다(칸을 누르면 그 쪽으로 감).
 칸을 누르면 쪽 이미지 위에 그 칸 자리를 상자로 표시한다: 확인 필요 = 빨강, 그 밖 = 노랑.
 """
 import base64
@@ -9,8 +9,11 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QListWidget, QMessageBox, QPlainTextEdit,
+from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QMessageBox, QPlainTextEdit,
                                QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+
+import theme
+from home import DropZone
 
 COLS = ["칸", "값", "상태", "비교 값", "사유"]
 DEFAULT_OUT = Path.home() / "Documents" / "BridgeDocs 읽기 결과"
@@ -57,67 +60,120 @@ class ReadTab(QWidget):
         self.out_dir = DEFAULT_OUT
         self.labels = svc.labels()
 
-        self.status = QLabel("읽을 파일을 넣으세요")
-        self.out_label = QLabel(f"결과(JSON) 저장 폴더: {self.out_dir}")
+        self.status = theme.label("읽을 파일을 넣고 [읽기 시작]을 누르세요", "sectionTitle")
+        self.out_label = theme.label(f"결과(JSON) 저장 폴더: {self.out_dir}", "muted")
         self.doc_list = QListWidget()
         self.doc_list.currentRowChanged.connect(self._show_doc)
         self.page = FitImage()
-        self.doc_title = QLabel("왼쪽 목록에서 문서를 고르세요")
-        self.doc_title.setStyleSheet("font-size: 15px; font-weight: bold; padding: 4px 0;")
-        self.doc_title.setWordWrap(True)
+        self.page.setStyleSheet(f"background: #EEF1F6; border-radius: 10px; color: {theme.MUTED};")
+        self.doc_title = theme.label("왼쪽 목록에서 문서를 고르세요", "sectionTitle", wrap=True)
         self.table = QTableWidget(0, len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemChanged.connect(self._edited)
         self.table.currentCellChanged.connect(lambda r, *_: self.mark(r))
         self._images = {}       # 문서 파일들 → [(쪽 QPixmap, 원래 폭)]
-        self.kinds = {k: QCheckBox(k) for k in ("xlsx", "csv", "txt")}
+        self.kinds = {}
+        for k in ("xlsx", "csv", "txt"):     # 내보낼 형식(여러 개 고를 수 있음)
+            self.kinds[k] = QPushButton(k.upper())
+            self.kinds[k].setCheckable(True)
+            self.kinds[k].setProperty("seg", True)
         self.kinds["xlsx"].setChecked(True)
         self.message = QPlainTextEdit(readOnly=True)
-        self.message.setMaximumHeight(90)
+        self.message.setMaximumHeight(70)
+        self.message.setPlaceholderText("진행 상황과 안내가 여기에 나와요")
 
-        b = {n: QPushButton(n) for n in ("파일 넣기", "저장 폴더", "읽기 시작", "취소", "이 칸 확정", "비교 값으로", "한 번에 확정",
-                                          "내보내기", "JSON 위치")}
-        b["파일 넣기"].clicked.connect(self._pick_files)
+        b = {n: theme.button(n) for n in ("저장 폴더", "취소", "이 칸 확정", "비교 값으로", "JSON 위치")}
+        b.update({n: theme.button(n, "primary") for n in ("+  파일 추가", "읽기 시작", "한 번에 확정", "↓  내보내기")})
+        b["+  파일 추가"].clicked.connect(self._pick_files)
         b["저장 폴더"].clicked.connect(self._pick_out)
         b["읽기 시작"].clicked.connect(self.start)
         b["취소"].clicked.connect(self.cancel)
         b["이 칸 확정"].clicked.connect(lambda: self.confirm(self.table.currentRow()))
         b["비교 값으로"].clicked.connect(lambda: self.confirm(self.table.currentRow(), use_compare=True))
         b["한 번에 확정"].clicked.connect(self.confirm_all)
-        b["내보내기"].clicked.connect(self._export_dialog)
+        b["↓  내보내기"].clicked.connect(self._export_dialog)
         b["JSON 위치"].clicked.connect(lambda: self._say("JSON은 문서를 읽을 때 저장돼요: " +
                                                        (", ".join(self.svc.json_folders(self.docs)) or str(self.out_dir))))
 
-        top = QHBoxLayout()
-        for n in ("파일 넣기", "저장 폴더", "읽기 시작", "취소"):
-            top.addWidget(b[n])
-        top.addWidget(self.status, 1)
-        right = QWidget()
-        rl = QVBoxLayout(right)
+        # 진행 상황 띠
+        banner, bl = theme.card("banner")
+        brow = QHBoxLayout()
+        icon = theme.label("✓", "iconBox")
+        icon.setFixedSize(42, 42)
+        icon.setAlignment(Qt.AlignCenter)
+        brow.addWidget(icon)
+        bcol = QVBoxLayout()
+        bcol.setSpacing(2)
+        bcol.addWidget(self.status)
+        bcol.addWidget(self.out_label)
+        brow.addLayout(bcol, 1)
+        for n in ("저장 폴더", "취소", "읽기 시작"):
+            brow.addWidget(b[n])
+        bl.addLayout(brow)
+        bl.addWidget(self.message)
+
+        # 세 칸: 문서 목록 · 쪽 이미지 · 읽은 값
+        lcard, ll = theme.card()
+        ll.addWidget(theme.label("문서 목록", "sectionTitle"))
+        ll.addWidget(theme.label("읽은 문서를 누르면 확인할 수 있어요", "muted"))
+        ll.addWidget(self.doc_list, 1)
+        ll.addWidget(DropZone(self.add_files, "파일을 추가로 놓아주세요", "PDF · PNG · JPG · DOCX", button_text=""))
+        mcard, ml = theme.card()
+        ml.addWidget(self.doc_title)
+        ml.addWidget(self.page, 1)
+        rcard, rl = theme.card()
+        head = QHBoxLayout()
+        hc = QVBoxLayout()
+        hc.setSpacing(2)
+        hc.addWidget(theme.label("인식된 정보", "sectionTitle"))
+        hc.addWidget(theme.label("값 칸을 두 번 눌러 고칠 수 있어요 · 칸을 누르면 문서에 위치가 보여요", "muted", wrap=True))
+        head.addLayout(hc, 1)
+        rl.addLayout(head)
         rl.addWidget(self.table, 1)
         row = QHBoxLayout()
         for n in ("이 칸 확정", "비교 값으로", "한 번에 확정"):
-            row.addWidget(b[n])
+            row.addWidget(b[n], 1)
         rl.addLayout(row)
         split = QSplitter()
-        split.addWidget(self.doc_list)
-        split.addWidget(self.page)
-        split.addWidget(right)
-        split.setSizes([180, 420, 520])
-        bottom = QHBoxLayout()
-        bottom.addWidget(QLabel("내보내기:"))
+        split.setHandleWidth(14)
+        for w in (lcard, mcard, rcard):
+            split.addWidget(w)
+        split.setSizes([260, 460, 520])
+
+        # 내보내기 띠
+        ecard, el = theme.card()
+        erow = QHBoxLayout()
+        eicon = theme.label("↓", "iconBoxGreen")
+        eicon.setFixedSize(42, 42)
+        eicon.setAlignment(Qt.AlignCenter)
+        erow.addWidget(eicon)
+        ecol = QVBoxLayout()
+        ecol.setSpacing(2)
+        ecol.addWidget(theme.label("확인이 끝났나요?", "sectionTitle"))
+        ecol.addWidget(theme.label("원하는 파일 형식을 고르고 결과를 저장하세요.", "muted"))
+        erow.addLayout(ecol, 1)
+        seg = QFrame()
+        seg.setObjectName("segBox")
+        sl = QHBoxLayout(seg)
+        sl.setContentsMargins(4, 4, 4, 4)
+        sl.setSpacing(2)
         for c in self.kinds.values():
-            bottom.addWidget(c)
-        bottom.addWidget(b["내보내기"])
-        bottom.addWidget(b["JSON 위치"])
-        bottom.addStretch(1)
+            sl.addWidget(c)
+        erow.addWidget(seg)
+        erow.addWidget(b["JSON 위치"])
+        erow.addWidget(b["↓  내보내기"])
+        el.addLayout(erow)
+
         lay = QVBoxLayout(self)
-        lay.addLayout(top)
-        lay.addWidget(self.out_label)
-        lay.addWidget(self.doc_title)
+        lay.setContentsMargins(28, 22, 28, 18)
+        lay.setSpacing(14)
+        lay.addLayout(theme.page_head("문서 읽기", "문서 읽기", "읽은 값을 확인하고 필요한 부분을 고쳐 주세요.", b["+  파일 추가"]))
+        lay.addWidget(banner)
         lay.addWidget(split, 1)
-        lay.addLayout(bottom)
-        lay.addWidget(self.message)
+        lay.addWidget(ecard)
 
     # ── 파일 넣기·읽기 ──
     def add_files(self, paths: list[Path]) -> dict:
@@ -198,7 +254,7 @@ class ReadTab(QWidget):
                 if c != 1:
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 if f["status"] == "review":
-                    item.setBackground(Qt.yellow)
+                    item.setBackground(QColor(theme.WARN_SOFT))
                 self.table.setItem(r, c, item)
         self.table.blockSignals(False)
         self.table.resizeColumnsToContents()

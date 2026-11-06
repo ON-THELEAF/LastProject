@@ -88,16 +88,16 @@ svc = DesktopService(models)
 
 | 함수 | 하는 일 |
 |---|---|
-| `list_templates()` | 고를 양식: 기본 양식(`builtin:<종류>`, 증명서는 없음) + 사용자가 넣은 워드 양식 |
+| `list_templates()` | 고를 양식: 사용자가 넣은 워드 양식만(고정 기본 양식 없음). 하나도 없으면 `[]` |
 | `add_template(path)` / `remove_template(id)` | 워드 양식 추가(양식 폴더로 복사) / 사용자 양식 지우기 |
-| `template_keys(doc_type)` | 워드 양식에 쓸 수 있는 `{{이름}}` 목록 |
-| `prepare_make(data_path, template=None, doc_type=None)` | 데이터(JSON·CSV·엑셀·**txt**) → 만들 문서 목록 `[{name, doc_type, values, filled([]), problems, notes, template_path}]` |
-| `preview_make(doc, values)` | **미리보기와 고칠 곳 상자**: `{"pages": [{src,w,h}], "marks": [{key, label, reason, page, box, boxes}]}`. 비었거나 형식이 틀린 칸마다 마크가 하나씩 있어요. 워드 양식은 `pages: []`예요. |
-| `submit_make(docs, posted, out_dir)` | 만들기. `posted = [{"name", "make": bool, "values": {칸 키: 값}}]` |
+| `template_slots(template)` | 양식 안 빈칸(`{{…}}`) 이름들, 문서에 나오는 순서대로 |
+| `prepare_make(data_path, template, header=False)` | 데이터(JSON·CSV·엑셀·txt) → 만들 문서 목록 `[{name("문서1"…), values{"1. 빈칸 이름": 값}(순서대로), problems([]), notes, template_path}]`. 양식(.docx)이 없거나 빈칸이 없으면 `ValueError` |
+| `preview_make(doc, values)` | **고칠 곳 목록**: `{"pages": [], "marks": [{key, label, reason, page: None, box: None}]}`. 비어 있는 빈칸마다 마크가 하나씩 있어요. |
+| `submit_make(docs, posted, out_dir)` | 만들기. `posted = [{"name", "make": bool, "values": {칸 키: 값}}]` → `{"problems": {}, "results": [{name, path, message}]}` |
 
-- 데이터에 없는 칸은 **빈칸으로 둬요**(임의 값으로 채우지 않아요. `filled`는 항상 `[]`). 빈칸은 만들기를 막지 않아요.
-- 형식이 틀린 칸이 하나라도 있으면 아무 파일도 만들지 않고 `{"problems": {이름: [문구]}, "results": []}`를 돌려줘요. 화면은 `preview_make`의 상자로 고칠 자리를 보여 주세요.
-- 값을 확인한 뒤 **한 번에 확정하는 버튼**을 두세요(화면에서 posted를 한꺼번에 만듦).
-- CSV·txt는 UTF-8과 CP949(한국어 엑셀 기본 저장) 둘 다 읽어요.
-- txt 데이터의 구분 기호(탭·쉼표·세미콜론·세로줄)는 자동으로 판단해요. `칸: 값` 줄 형식도 받아요. 모르는 칸은 빼고 `notes`에 적어요.
+- **순서대로 채우기(2026-11-06 결정):** 표의 한 줄이 문서 하나예요. 값을 왼쪽부터 양식의 빈칸에 **문서에 나오는 순서대로** 넣어요. 칸 이름·데이터 파일 이름은 보지 않아요(`{{}}`처럼 비워 둬도 돼요).
+- 첫 줄이 제목인지는 **사용자가 정해요**(화면의 "첫 줄은 제목" 체크박스 → `header=True`면 첫 줄을 건너뜀, 기본은 첫 줄부터 값). JSON에는 상관없어요.
+- 값이 모자라면 남은 빈칸은 비워 두고, 남으면 뒤쪽 값은 빼요. 둘 다 `notes`에 적어요. 만든 파일 이름은 `문서1.docx`, `문서2.docx`…예요.
+- JSON(읽기 결과)은 문서마다 칸 값들을 순서대로 한 줄로 봐요.
+- CSV·txt는 UTF-8과 CP949(한국어 엑셀 기본 저장) 둘 다 읽어요. txt의 구분 기호(탭·쉼표·세미콜론·세로줄)는 자동으로 판단해요.
 - 만들다 실패하면 `ValueError`를 내요.

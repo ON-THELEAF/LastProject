@@ -1,15 +1,43 @@
-"""문서 만들기 탭: 데이터 넣기 → 양식 고르기(원래 있던 양식 또는 새 워드 양식) → 값 확인·수정 → 만들기.
+"""문서 만들기 탭: 데이터 넣기 → 양식 고르기(사용자가 넣은 워드 양식) → 값 확인·수정 → 만들기.
 
 화면은 DesktopService만 부른다. 오류는 서비스가 주는 한국어 문구를 그대로 보여 준다.
 """
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
-                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QPlainTextEdit, QTreeWidget,
+                               QTreeWidgetItem, QVBoxLayout, QWidget)
+
+import theme
+from home import DropZone
 
 DATA_FILTER = "데이터 (*.json *.csv *.xlsx *.txt)"
 FILLED_NOTE = "비어 있어 임의 값으로 채움 — 확인하세요"
+
+
+def _step(n: int, title: str, sub: str, content) -> QWidget:
+    """번호 동그라미 · 단계 제목 · 내용이 한 줄인 단계 카드."""
+    f, lay = theme.card()
+    lay.setContentsMargins(22, 20, 22, 20)
+    row = QHBoxLayout()
+    row.setSpacing(18)
+    num = theme.label(str(n), "stepNum")
+    num.setFixedSize(30, 30)
+    num.setAlignment(Qt.AlignCenter)
+    head = QVBoxLayout()
+    head.setSpacing(2)
+    head.addWidget(num)
+    head.addWidget(theme.label(f"{n}단계", "eyebrow"))
+    head.addWidget(theme.label(title, "sectionTitle"))
+    head.addWidget(theme.label(sub, "muted", wrap=True))
+    head.addStretch(1)
+    box = QWidget()
+    box.setFixedWidth(170)
+    box.setLayout(head)
+    row.addWidget(box)
+    row.addLayout(content, 1)
+    lay.addLayout(row)
+    return f
 
 
 class MakeTab(QWidget):
@@ -17,20 +45,25 @@ class MakeTab(QWidget):
         super().__init__(parent)
         self.svc, self.data_path, self.out_dir, self.docs = svc, None, None, []
 
-        self.data_label = QLabel("데이터 파일을 고르세요")
+        self.data_label = theme.label("데이터 파일을 고르세요", "sectionTitle")
+        self.data_sub = theme.label("CSV · TXT · XLSX · JSON  |  한 줄이 문서 하나예요", "muted")
+        self.header_box = QCheckBox("첫 줄은 제목(건너뛰기)")
         self.template_box = QComboBox()
         self.template_box.setAccessibleName("양식")
-        self.hint = QLabel()
-        self.hint.setWordWrap(True)
-        self.out_label = QLabel("저장 폴더를 고르세요")
+        self.template_box.setPlaceholderText("양식을 추가하세요")
+        self.hint = theme.label("", "muted", wrap=True)
+        self.out_label = theme.label("저장 폴더를 고르세요", "muted")
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["문서 / 칸", "값", "알림"])
+        self.tree.setHeaderLabels(["문서 / 빈칸", "값", "알림"])
         self.tree.setColumnWidth(0, 220)
-        self.tree.setColumnWidth(1, 260)
+        self.tree.setColumnWidth(1, 300)
+        self.tree.setMinimumHeight(260)
         self.message = QPlainTextEdit(readOnly=True)
-        self.message.setMaximumHeight(110)
+        self.message.setMaximumHeight(90)
+        self.message.setPlaceholderText("진행 상황과 안내가 여기에 나와요")
 
-        buttons = {name: QPushButton(name) for name in ("데이터 고르기", "새 양식 추가…", "양식 지우기", "불러오기", "저장 폴더 고르기", "만들기")}
+        buttons = {name: theme.button(name) for name in ("데이터 고르기", "새 양식 추가…", "양식 지우기", "저장 폴더 고르기")}
+        buttons.update({name: theme.button(name, "primary") for name in ("불러오기", "만들기")})
         buttons["데이터 고르기"].clicked.connect(self._pick_data)
         buttons["새 양식 추가…"].clicked.connect(self._pick_template)
         buttons["양식 지우기"].clicked.connect(self._remove_template)
@@ -39,31 +72,74 @@ class MakeTab(QWidget):
         buttons["만들기"].clicked.connect(lambda: self.make())
         self.template_box.currentIndexChanged.connect(self._show_hint)
 
-        grid = QGridLayout()
-        grid.addWidget(QLabel("1. 데이터"), 0, 0)
-        grid.addWidget(self.data_label, 0, 1)
-        grid.addWidget(buttons["데이터 고르기"], 0, 2)
-        grid.addWidget(QLabel("2. 양식"), 1, 0)
-        grid.addWidget(self.template_box, 1, 1)
-        row = QHBoxLayout()
-        row.addWidget(buttons["새 양식 추가…"])
-        row.addWidget(buttons["양식 지우기"])
-        grid.addLayout(row, 1, 2)
-        grid.addWidget(self.hint, 2, 1, 1, 2)
-        grid.addWidget(buttons["불러오기"], 3, 2)
-        grid.setColumnStretch(1, 1)
+        # 1단계 데이터
+        s1 = QVBoxLayout()
+        file_box, fl = theme.card()
+        frow = QHBoxLayout()
+        ic = theme.label("▤", "iconBoxGreen")
+        ic.setFixedSize(40, 40)
+        ic.setAlignment(Qt.AlignCenter)
+        frow.addWidget(ic)
+        fc = QVBoxLayout()
+        fc.setSpacing(2)
+        fc.addWidget(self.data_label)
+        fc.addWidget(self.data_sub)
+        frow.addLayout(fc, 1)
+        frow.addWidget(self.header_box)
+        frow.addWidget(buttons["데이터 고르기"])
+        fl.addLayout(frow)
+        s1.addWidget(file_box)
+        s1.addWidget(DropZone(lambda ps: self.set_data(ps[0]), "데이터 파일을 끌어다 놓아도 돼요", "CSV · TXT · XLSX · JSON",
+                              button_text="", file_filter=DATA_FILTER))
+        # 2단계 양식과 내용
+        s2 = QVBoxLayout()
+        trow = QHBoxLayout()
+        trow.addWidget(theme.label("문서 양식", "sectionTitle"))
+        trow.addWidget(self.template_box, 1)
+        trow.addWidget(buttons["새 양식 추가…"])
+        trow.addWidget(buttons["양식 지우기"])
+        trow.addWidget(buttons["불러오기"])
+        s2.addLayout(trow)
+        s2.addWidget(self.hint)
+        s2.addWidget(self.tree, 1)
+        # 3단계 만들기
+        s3 = QHBoxLayout()
+        s3.addWidget(self.out_label, 1)
+        s3.addWidget(buttons["저장 폴더 고르기"])
+        s3.addWidget(buttons["만들기"])
 
-        bottom = QHBoxLayout()
-        bottom.addWidget(QLabel("3. 저장 폴더"))
-        bottom.addWidget(self.out_label, 1)
-        bottom.addWidget(buttons["저장 폴더 고르기"])
-        bottom.addWidget(buttons["만들기"])
+        steps = QVBoxLayout()
+        steps.setSpacing(14)
+        steps.addWidget(_step(1, "데이터 불러오기", "CSV, TXT, XLSX 파일을 쓸 수 있어요.", s1))
+        steps.addWidget(_step(2, "양식과 내용 확인", "값을 두 번 눌러 직접 고칠 수 있어요.", s2), 1)
+        steps.addWidget(_step(3, "문서 만들기", "저장 폴더를 고르고 만드세요.", s3))
+        steps.addWidget(self.message)
 
+        guide, gl = theme.card()
+        gi = theme.label("i", "iconBox")
+        gi.setFixedSize(40, 40)
+        gi.setAlignment(Qt.AlignCenter)
+        gl.addWidget(gi)
+        gl.addWidget(theme.label("사용 안내", "cardTitle"))
+        gl.addWidget(theme.label("내가 넣은 워드 양식(.docx)의 빈칸 {{…}}에 데이터 값을 왼쪽부터 순서대로 넣어 문서를 만들어요.", "muted", wrap=True))
+        for t in ("없는 값은 빈칸으로 만들어요", "표 한 줄 = 문서 하나", "첫 줄이 제목이면 체크하세요"):
+            gl.addWidget(theme.label("✓  " + t))
+        tip, tl = theme.card("guide")
+        tl.addWidget(theme.label("양식 만드는 법", "sectionTitle"))
+        tl.addWidget(theme.label("워드에서 값이 들어갈 자리에 {{이름}}처럼 적어 저장한 뒤 '새 양식 추가…'로 넣으세요.", "muted", wrap=True))
+        gl.addWidget(tip)
+        gl.addStretch(1)
+        guide.setFixedWidth(300)
+
+        body = QHBoxLayout()
+        body.setSpacing(18)
+        body.addLayout(steps, 1)
+        body.addWidget(guide, 0, Qt.AlignTop)
         lay = QVBoxLayout(self)
-        lay.addLayout(grid)
-        lay.addWidget(self.tree, 1)
-        lay.addLayout(bottom)
-        lay.addWidget(self.message)
+        lay.setContentsMargins(28, 22, 28, 18)
+        lay.setSpacing(14)
+        lay.addLayout(theme.page_head("문서 만들기", "문서 만들기", "데이터를 불러와 내용을 확인하고 새 문서를 만드세요."))
+        lay.addLayout(body, 1)
         self.refresh_templates()
 
     # ── 양식 ──
@@ -95,30 +171,32 @@ class MakeTab(QWidget):
     def _show_hint(self) -> None:
         t = self.template()
         if not t:
-            self.hint.setText("")
-        elif t["kind"] == "builtin":
-            self.hint.setText("프로그램에 들어 있는 양식으로 PDF를 만들어요. 데이터에 없는 칸은 빈칸으로 둬요.")
+            self.hint.setText("양식이 없어요. '새 양식 추가…'로 워드 양식(.docx)을 넣으세요. 양식 안에 {{칸 이름}}을 적어 두면 그 자리에 값이 들어가요.")
         else:
-            dtype = next((d["doc_type"] for d in self.docs if d.get("doc_type")), None)
-            keys = "  ".join("{{" + k + "}}" for k in self.svc.template_keys(dtype)) if dtype else ""
-            self.hint.setText("워드 양식 안의 {{칸 이름}} 자리에 값을 넣어 docx로 만들어요." + (f"\n쓸 수 있는 이름: {keys}" if keys else ""))
+            try:
+                slots = self.svc.template_slots(t["path"])
+            except ValueError as err:
+                return self.hint.setText(str(err))
+            order = "  ".join(f"{i}.{{{{{s}}}}}" for i, s in enumerate(slots, 1)) or "없음 — 양식에 {{칸 이름}}을 적어 두세요"
+            self.hint.setText("데이터 한 줄이 문서 하나예요. 값을 왼쪽부터 순서대로 양식의 빈칸에 넣어 docx로 만들어요"
+                              "(첫 줄이 제목이면 '첫 줄은 제목'을 체크하세요).\n이 양식의 빈칸 순서: " + order)
 
     # ── 불러오기·확인 ──
     def set_data(self, path: Path) -> None:
         self.data_path = Path(path)
         self.data_label.setText(self.data_path.name)
+        self.data_sub.setText(str(self.data_path.parent))
 
     def load(self) -> None:
         t = self.template()
         if not self.data_path:
             return self._say("데이터 파일을 먼저 고르세요")
         if not t:
-            return self._say("양식을 고르세요")
-        self._say("불러오는 중… (보통 문장으로 쓴 txt면 AI가 글을 읽어서 수십 초 걸려요)")
+            return self._say("양식을 고르세요 — '새 양식 추가…'로 워드 양식(.docx)을 넣을 수 있어요")
+        self._say("불러오는 중…")
         QApplication.processEvents()
         try:
-            self.docs = (self.svc.prepare_make(self.data_path, doc_type=t["doc_type"]) if t["kind"] == "builtin"
-                         else self.svc.prepare_make(self.data_path, template=t["path"]))
+            self.docs = self.svc.prepare_make(self.data_path, template=t["path"], header=self.header_box.isChecked())
         except ValueError as err:
             self.docs = []
             self._fill_tree()
@@ -133,7 +211,7 @@ class MakeTab(QWidget):
         labels = self.svc.labels()
         for d in self.docs:
             probs = (problems or {}).get(d["name"], d["problems"])
-            top = QTreeWidgetItem([d["name"], labels["doc_type"].get(d["doc_type"], d["doc_type"] or "알 수 없음"), " / ".join(probs)])
+            top = QTreeWidgetItem([d["name"], f"값 {sum(bool(v) for v in d['values'].values())}개", " / ".join(probs + d.get("notes", []))])
             top.setFlags(top.flags() | Qt.ItemIsUserCheckable)
             top.setCheckState(0, Qt.Unchecked if d["problems"] else Qt.Checked)
             top.setData(0, Qt.UserRole, d["name"])

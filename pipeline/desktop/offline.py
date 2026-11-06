@@ -38,7 +38,7 @@ def setup_offline(base: Path) -> Path:
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["PADDLE_PDX_CACHE_HOME"] = str(_ascii_paddlex(models / "paddlex"))
     os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
-    os.environ.setdefault("BD_FORMS", str(Path(base) / "양식"))   # 사용자가 기본 양식 PDF를 넣는 폴더(exe에는 양식을 넣지 않음)
+    os.environ.setdefault("BD_FORMS", str(Path(base) / "양식"))   # 사용자가 넣은 워드 양식을 두는 폴더
     os.environ.setdefault("BD_CUSTOM", str(Path(base) / "새 문서 종류.json"))   # 사용자가 확정한 새 문서 종류의 칸 목록
     return models
 

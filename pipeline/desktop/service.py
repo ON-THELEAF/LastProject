@@ -8,6 +8,7 @@
 
 오류는 화면에 그대로 보여 줄 수 있는 한국어 문구의 ValueError로 알린다.
 """
+import json
 import threading
 import zipfile
 from pathlib import Path
@@ -168,13 +169,11 @@ class DesktopService:
 
     # ── 문서 만들기(모델 필요 없음) ──
     def list_templates(self) -> list[dict]:
-        """문서 만들기에서 고를 양식. 원래 있던 양식(기본 양식, 쓸 수 있는 것만) + 사용자가 넣은 워드 양식.
-        -> [{"id", "name", "kind": "builtin"|"docx", "doc_type"(기본 양식만), "path"(워드 양식만)}]"""
-        out = [{"id": f"builtin:{t}", "name": f"{bd.DOC_TYPE_LABEL.get(t, t)} (기본 양식)", "kind": "builtin", "doc_type": t, "path": None}
-               for t in bd.MAKE_TYPES if t not in bd.NEEDS_FORM or bd.form_file(t)]
+        """문서 만들기에서 고를 양식: 사용자가 넣은 워드 양식만(고정 기본 양식은 없음, 2026-11-06 결정).
+        -> [{"id", "name", "kind": "docx", "doc_type": None, "path"}]"""
         folder = bd.forms_dir()
         docx = sorted(folder.glob("*.docx")) if folder and folder.is_dir() else []
-        return out + [{"id": str(p), "name": p.name, "kind": "docx", "doc_type": None, "path": p} for p in docx if not p.name.startswith("~$")]
+        return [{"id": str(p), "name": p.name, "kind": "docx", "doc_type": None, "path": p} for p in docx if not p.name.startswith("~$")]
 
     def add_template(self, path: Path) -> dict:
         """새 워드 양식을 프로그램의 양식 폴더로 복사해 둔다(다음에 켜도 남음). 같은 이름이 있으면 ' (2)'를 붙인다."""
@@ -194,112 +193,88 @@ class DesktopService:
         return next(t for t in self.list_templates() if t["id"] == str(target))
 
     def remove_template(self, template_id: str) -> None:
-        if template_id.startswith("builtin:"):
-            raise ValueError("기본 양식은 지울 수 없어요")
         p = Path(template_id)
         if p.parent != bd.forms_dir() or p.suffix.lower() != ".docx":    # 양식 폴더 밖의 파일은 지우지 않는다
             raise ValueError(f"양식 폴더의 워드 양식만 지울 수 있어요 — {p.name}")
         p.unlink(missing_ok=True)
 
-    def template_keys(self, doc_type: str) -> list[str]:
-        """워드 양식 안에 {{이름}}으로 쓸 수 있는 이름들(칸 표기와 키 둘 다, 그리고 파일·문서 종류·오늘)."""
-        dtype = bd.resolve_type(doc_type)
-        if not dtype:
-            raise ValueError(f"모르는 문서 종류 '{doc_type}' (가능: {', '.join(bd.DOC_FIELDS)})")
-        keys = [k for k in bd.DOC_FIELDS[dtype] if k not in bd.COMPUTED]
-        return ["파일", "문서 종류", "오늘"] + [n for k in keys for n in (bd.FIELD_LABEL.get(k, k), k)]
+    def template_slots(self, template: Path) -> list[str]:
+        """양식 안 빈칸({{…}}) 이름들, 문서에 나오는 순서대로. 데이터 값이 이 순서로 들어간다."""
+        try:
+            return bd.template_slots(Path(template))
+        except (OSError, KeyError, zipfile.BadZipFile, UnicodeDecodeError) as err:
+            raise ValueError(f"워드 양식을 읽을 수 없음 — {Path(template).name} ({err})") from err
 
-    def prepare_make(self, data_path: Path, template: Path | None = None, doc_type: str | None = None, seed: int = 7) -> list[dict]:
-        """데이터 → 만들 문서 목록(아직 파일은 안 씀). 화면은 이걸 보여 주고 사용자가 확인·수정하게 한다."""
+    def prepare_make(self, data_path: Path, template: Path, header: bool = False) -> list[dict]:
+        """데이터 → 만들 문서 목록(아직 파일은 안 씀). 표의 한 줄이 문서 하나이고, 값은 왼쪽부터 양식 빈칸에 순서대로 들어간다.
+        칸 이름·파일 이름은 보지 않는다. header=True면 첫 줄은 제목 줄로 보고 건너뛴다(화면의 체크박스, JSON은 상관없음).
+        -> [{name, values{"1. 빈칸 이름": 값}(순서대로), problems[], notes, template_path}]"""
         data_path = Path(data_path)
         if not data_path.exists():
             raise ValueError(f"데이터 파일이 없음 — {data_path}")
-        if template and (not Path(template).exists() or Path(template).suffix.lower() != ".docx"):
+        if not template:
+            raise ValueError("양식을 고르세요 — '새 양식 추가…'로 워드 양식(.docx)을 넣을 수 있어요")
+        if not Path(template).exists() or Path(template).suffix.lower() != ".docx":
             raise ValueError(f"양식은 있는 .docx 파일이어야 함 — {template}")
-        dtype = bd.resolve_type(doc_type) if doc_type else None
-        if doc_type and not dtype:
-            raise ValueError(f"모르는 문서 종류 '{doc_type}' (가능: {', '.join(bd.DOC_FIELDS)})")
+        slots = self.template_slots(template)
+        if not slots:
+            raise ValueError("양식에 빈칸이 없어요 — 값이 들어갈 자리에 {{칸 이름}}을 적어 두세요")
         try:
-            recs = bd.load_records(data_path, dtype)
+            rows = self._data_rows(data_path)
         except (OSError, ValueError, IndexError, KeyError, zipfile.BadZipFile, UnicodeDecodeError) as e:
             raise ValueError(f"데이터 파일을 읽을 수 없음 — {data_path.name} ({type(e).__name__}: {e})") from e
-        if data_path.suffix.lower() == ".txt" and not any(r["values"] for r in recs):      # 표·'칸: 값' 형식이 아닌 보통 글
-            types = list(bd.DOC_FIELDS) if template else bd.MAKE_TYPES
-            recs = [bd.text_record(bd.read_text_any(data_path), self._ask_text, dtype, bd.safe_name(data_path.stem, 1), types)]
-        if not recs:
+        rows = [[str(c).strip() for c in r] for r in rows if any(str(c).strip() for c in r)]
+        if header and data_path.suffix.lower() != ".json":
+            rows = rows[1:]
+        if not rows:
             raise ValueError("데이터가 비어 있음")
-        if dtype:      # 기본 양식을 골랐으면 그 종류로 만든다. 데이터가 다른 종류면 값 칸이 맞지 않으니 막는다
-            other = {r["doc_type"] for r in recs if r["doc_type"] and r["doc_type"] != dtype}
-            if other:
-                raise ValueError(f"데이터는 {', '.join(bd.DOC_TYPE_LABEL.get(t, t) for t in other)}인데 "
-                                 f"고른 양식은 {bd.DOC_TYPE_LABEL.get(dtype, dtype)}이에요 — 맞는 양식을 고르세요")
-            recs = [{**r, "doc_type": dtype} for r in recs]
-        tp = str(template) if template else None     # submit_make가 같은 양식을 쓰도록 문서에 기억
-        return [{**d, "template_path": tp} for d in bd.prepare_docs(recs, template, seed)]
+        keys = [f"{i}. {s}" if s else f"{i}" for i, s in enumerate(slots, 1)]
+        docs = []
+        for n, r in enumerate(rows, 1):
+            notes = []
+            if len(r) > len(keys):
+                notes.append(f"값이 빈칸보다 {len(r) - len(keys)}개 많아 뒤쪽 값은 뺐어요")
+            elif len(r) < len(keys):
+                notes.append(f"값이 {len(keys) - len(r)}개 모자라 그 빈칸은 비워 둬요")
+            docs.append({"name": f"문서{n}", "doc_type": None, "values": dict(zip(keys, r + [""] * len(keys))),
+                         "filled": [], "problems": [], "notes": notes, "template_path": str(template)})
+        return docs
 
-    def _ask_text(self, prompt: str) -> str:
-        """글만 주고 AI에게 묻기(보통 글로 쓴 txt 데이터용). 처음이면 모델을 불러와 수십 초 걸린다.
-        shortcut: 화면 스레드에서 돈다(그동안 창이 멈춤) — 자주 쓰게 되면 ReadJob처럼 작업 스레드로."""
-        if self.busy():
-            raise ValueError("문서를 읽는 중이에요 — AI를 같이 써서, 읽기가 끝난 뒤에 다시 불러오세요")
-        if not self.status()["models_ok"]:
-            raise ValueError("보통 문장으로 쓴 txt는 AI가 읽어야 하는데 모델이 없어요 — '칸: 값' 줄 형식(예: 임대인: 김철수)으로 써 주세요")
-        model, proc, _ = self.engine.get()
-        return bd.ask_text(model, proc, prompt, max_new=400)
+    @staticmethod
+    def _data_rows(path: Path) -> list[list]:
+        """데이터 파일 → 행 목록. JSON(읽기 결과)은 문서마다 칸 값들을 순서대로 한 줄로."""
+        if path.suffix.lower() == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return [[f.get("value", "") for f in d.get("fields", [])] for d in (data if isinstance(data, list) else [data])]
+        return bd.read_table(path)
 
-    def preview_make(self, doc: dict, values: dict, width: int = 900) -> dict:
-        """만들어질 문서 미리보기와 고칠 곳 표시. 비어 있거나 형식이 틀린 칸마다 마크(문서 위 상자 위치)를 준다.
-        -> {"pages": [{"src", "w", "h"}], "marks": [{"key", "label", "reason", "page", "box": [x0, y0, x1, y1](원래 크기 px) 또는 None,
-                                                    "boxes": [{"page", "box"}](그 값에서 따라 나온 글자 자리까지 모두)}]}
-        워드 양식으로 만드는 문서는 그림을 그릴 수 없어 pages가 []이고 마크의 page·box는 None."""
-        dtype = doc["doc_type"]
-        known = bd.DOC_FIELDS.get(dtype)
-        if known is None:
-            raise ValueError("문서 종류를 알 수 없어 미리 볼 수 없어요")
-        vals = {k: str(v) for k, v in values.items() if k in known}
-        reasons = {}
-        for k in known:
-            if k in bd.COMPUTED:
-                continue
-            if not vals.get(k, "").strip():
-                reasons[k] = "비어 있음 — 빈칸으로 만들어져요"
-                continue
-            _, probs = bd.check_record({"name": doc["name"], "doc_type": dtype, "values": {k: vals[k]}, "unknown": []})
-            if probs:
-                reasons[k] = probs[0]
-        if doc.get("template_path") or doc.get("template") or dtype not in bd.MAKE_TYPES:
-            return {"pages": [], "marks": [{"key": k, "label": bd.FIELD_LABEL.get(k, k), "reason": r, "page": None, "box": None}
-                                           for k, r in reasons.items()]}
-        draw = {k: v for k, v in vals.items() if k not in reasons}      # 비었거나 틀린 칸은 빈칸으로 그리고 상자로 표시
-        try:
-            pages, spots, _ = bd.render_doc(dtype, draw)
-        except (OSError, ValueError, KeyError, IndexError, TypeError) as err:
-            raise ValueError(f"미리보기를 만들 수 없음 — {err}") from err
-        marks = []
-        for k, r in reasons.items():
-            where = spots.get(k) or [(None, None)]
-            marks.append({"key": k, "label": bd.FIELD_LABEL.get(k, k), "reason": r, "page": where[0][0], "box": where[0][1],
-                          "boxes": [{"page": pg, "box": bx} for pg, bx in where if bx]})
-        return {"pages": [bd.image_payload(p, width) for p in pages], "marks": marks}
+    def preview_make(self, doc: dict, values: dict) -> dict:
+        """고칠 곳 표시: 비어 있는 빈칸마다 마크. -> {"pages": [], "marks": [{"key", "label", "reason", "page": None, "box": None}]}"""
+        return {"pages": [], "marks": [{"key": k, "label": k, "reason": "비어 있음 — 빈칸으로 만들어져요", "page": None, "box": None}
+                                       for k in doc["values"] if not str(values.get(k, "")).strip()]}
 
-    def submit_make(self, docs: list[dict], posted: list[dict], out_dir: Path, seed: int = 7) -> dict:
+    def submit_make(self, docs: list[dict], posted: list[dict], out_dir: Path) -> dict:
         """확인·수정한 값으로 문서를 만든다. posted: [{"name", "make": bool, "values": {칸 키: 값}}].
-        양식은 prepare_make에서 고른 것(문서의 template_path)을 쓴다.
-        -> {"problems": {이름: [문구]}, "results": [{"name", "path"(Path), "message"("")}]}.
-        형식이 틀린 칸이 하나라도 있으면 아무 파일도 만들지 않고 problems로 알린다(화면이 preview_make로 자리를 보여 줌).
-        빈칸은 빈칸으로 만든다. 파일을 만들다 실패하면 ValueError."""
-        if not any(p.get("make") for p in posted):
+        값은 prepare_make가 정한 빈칸 순서대로 양식에 들어간다. 양식은 prepare_make에서 고른 것.
+        -> {"problems": {}, "results": [{"name", "path"(Path), "message"("")}]}. 파일을 만들다 실패하면 ValueError."""
+        by = {d["name"]: d for d in docs}
+        todo = [(by[p["name"]], p.get("values") or {}) for p in posted if p.get("make") and p.get("name") in by]
+        if not todo:
             raise ValueError("만들 문서를 하나 이상 고르세요")
-        tps = {d.get("template_path") for d in docs}
-        if len(tps) > 1:
-            raise ValueError("서로 다른 양식으로 준비한 문서가 섞여 있어요 — 데이터를 다시 불러오세요")
-        tp = tps.pop() if tps else None
-        todo = bd.apply_edits(docs, posted)
-        bad = {d["name"]: d["problems"] for d in todo if d["problems"]}
-        if bad:
-            return {"problems": bad, "results": []}
+        tps = {d["template_path"] for d, _ in todo}
+        if len(tps) != 1 or not next(iter(tps)):
+            raise ValueError("양식을 고르고 데이터를 다시 불러오세요")
+        tp, out_dir, results = Path(tps.pop()), Path(out_dir), []
         try:
-            res = bd.write_docs(todo, Path(tp) if tp else None, Path(out_dir), seed)
+            out_dir.mkdir(parents=True, exist_ok=True)
         except OSError as err:
             raise ValueError(f"결과 폴더를 만들 수 없음 — {out_dir} ({err.strerror or err})") from err
-        return {"problems": {}, "results": [{"name": n, "path": p, "message": m} for n, p, m in res]}
+        for d, vals in todo:
+            seq = iter([str(vals.get(k, d["values"][k])) for k in d["values"]])
+            path = out_dir / f"{d['name']}.docx"
+            try:
+                bd.fill_docx(tp, lambda _name, s=seq: next(s, ""), path)
+            except (OSError, KeyError, zipfile.BadZipFile, UnicodeDecodeError) as e:
+                raise ValueError(f"{d['name']} 문서를 만들지 못함({type(e).__name__}: {e})") from e
+            results.append({"name": d["name"], "path": path, "message": ""})
+        return {"problems": {}, "results": results}

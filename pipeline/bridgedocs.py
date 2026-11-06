@@ -3067,11 +3067,13 @@ def fill_xml(xml, values):
             return p
 
         def sub(mm):
+            if callable(values):        # 순서대로 채우기: 칸 이름과 상관없이 다음 값
+                return str(values(mm[1]))
             if mm[1] in values:
                 return str(values[mm[1]])
             missing.add(mm[1])
             return mm[0]
-        new = re.sub(r"\{\{\s*(.+?)\s*\}\}", sub, text)
+        new = re.sub(SLOT, sub, text)
         if new == text:
             return p
         out, last = [], 0
@@ -3084,13 +3086,31 @@ def fill_xml(xml, values):
     return re.sub(r"<w:p[ >].*?</w:p>", para, xml, flags=re.S), missing
 
 
+SLOT = r"\{\{\s*(.*?)\s*\}\}"            # 양식의 빈칸 {{칸 이름}} ({{}}처럼 비워도 됨)
+SLOT_PART = r"word/(document|header\d*|footer\d*)\.xml"
+
+
+def template_slots(template):
+    """양식 docx의 빈칸 이름들을 문서에 나오는 순서대로(fill_docx가 채우는 순서와 같음)."""
+    import html
+    out = []
+    with zipfile.ZipFile(template) as z:
+        for item in z.infolist():
+            if re.fullmatch(SLOT_PART, item.filename):
+                for p in re.findall(r"<w:p[ >].*?</w:p>", z.read(item.filename).decode("utf-8"), re.S):
+                    text = "".join(html.unescape(t) for t in re.findall(r"<w:t(?:\s[^>]*)?>(.*?)</w:t>", p, re.S))
+                    out += re.findall(SLOT, text)
+    return out
+
+
 def fill_docx(template, values, out_path):
-    """양식 docx를 복사하며 본문·머리글·바닥글의 {{칸 이름}}을 바꾼다. -> 못 바꾼 칸 이름들"""
+    """양식 docx를 복사하며 본문·머리글·바닥글의 {{칸 이름}}을 바꾼다.
+    values: {칸 이름: 값} 또는 순서대로 채울 때는 칸 이름 → 값 함수. -> 못 바꾼 칸 이름들"""
     missing = set()
     with zipfile.ZipFile(template) as zin, zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
-            if re.fullmatch(r"word/(document|header\d*|footer\d*)\.xml", item.filename):
+            if re.fullmatch(SLOT_PART, item.filename):
                 xml, miss = fill_xml(data.decode("utf-8"), values)
                 data, missing = xml.encode("utf-8"), missing | miss
             zout.writestr(item, data)
