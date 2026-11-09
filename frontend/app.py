@@ -13,7 +13,7 @@ offline.ensure_offline()     # torch·paddle을 불러오기 전에
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow,  # noqa: E402
-                               QPushButton, QStackedWidget, QVBoxLayout, QWidget)
+                               QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
 import theme  # noqa: E402
 from desktop.service import DesktopService  # noqa: E402
@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
             self.nav.addButton(b)
             hl.addWidget(b)
         hl.addStretch(1)
-        hl.addWidget(theme.label(f'<span style="color:{theme.GREEN}">●</span>&nbsp; 오프라인으로 동작해요', "online"))
+        hl.addWidget(theme.label(f'<span style="color:{theme.FAIL}">●</span>&nbsp; 오프라인', "online"))
 
         footer = QFrame()
         footer.setObjectName("footer")
@@ -84,13 +84,16 @@ class MainWindow(QMainWindow):
         """홈에 놓은 파일: 데이터(CSV·TXT·XLSX·JSON)는 문서 만들기로, 나머지(이미지·PDF·docx)는 문서 읽기로."""
         data = [p for p in paths if p.suffix.lower() in MAKE_SUFFIXES]
         docs = [p for p in paths if p not in data]
+        if data and docs:
+            QMessageBox.information(self, "파일을 다시 골라 주세요",
+                                    "읽을 문서(PDF·이미지·워드)와 데이터 파일(CSV·TXT·XLSX·JSON)이 섞여 있어요.\n한 종류만 골라 다시 넣어 주세요.")
+            return
         if docs:
             self.read.add_files(docs)
             self.open("문서 읽기")
         if data:
+            self.open("문서 만들기")
             self.make.set_data(data[0])
-            if not docs:
-                self.open("문서 만들기")
 
 
 def main(argv: list[str] | None = None) -> int:

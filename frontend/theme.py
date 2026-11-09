@@ -24,9 +24,12 @@ QMainWindow, QStackedWidget, QScrollArea, QScrollArea > QWidget > QWidget {{ bac
 QPushButton#nav {{ background: transparent; border: none; border-bottom: 3px solid transparent;
                    padding: 18px 12px 15px; font-size: 14px; font-weight: 600; color: #4A5468; border-radius: 0; }}
 QPushButton#nav:hover {{ color: {BLUE}; }}
-QPushButton#nav:checked {{ color: {BLUE_DARK}; border-bottom-color: {BLUE}; }}
+QPushButton#nav:checked {{ color: {BLUE_DARK}; background: {BLUE_SOFT}; border-bottom-color: {BLUE}; }}
 
 #card {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 14px; }}
+#taskCard {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 14px; }}
+#taskCard:hover {{ background: {BLUE_SOFT}; border-color: {BLUE}; }}
+#drop:hover {{ background: {BLUE_SOFT}; border-color: {BLUE}; }}
 #banner {{ background: #EEF3FD; border: 1px solid #DCE6FA; border-radius: 14px; }}
 #drop {{ background: {CARD}; border: 1.5px dashed #B9C6E4; border-radius: 14px; }}
 #drop[hover="true"] {{ background: {BLUE_SOFT}; border-color: {BLUE}; }}

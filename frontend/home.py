@@ -12,6 +12,7 @@ class DropZone(QFrame):
     def __init__(self, drop, title: str, sub: str, button_text: str = "파일 선택", file_filter: str = ""):
         super().__init__()
         self.setObjectName("drop")
+        self.setAttribute(Qt.WA_Hover)      # 마우스를 올리면 강조(theme.QSS #drop:hover)
         self.setAcceptDrops(True)
         self.drop, self.file_filter = drop, file_filter
         lay = QHBoxLayout(self)
@@ -58,7 +59,10 @@ class DropZone(QFrame):
 
 
 def _task_card(icon: str, green: bool, eyebrow: str, title: str, body: str, chips: list[str], action: str, on_click) -> QFrame:
-    f, lay = theme.card()
+    f, lay = theme.card("taskCard")      # 마우스를 올리면 강조(theme.QSS)
+    f.setAttribute(Qt.WA_Hover)
+    f.setCursor(Qt.PointingHandCursor)
+    f.mousePressEvent = lambda e: on_click()
     lay.setContentsMargins(28, 26, 28, 24)
     ic = theme.label(icon, "iconBoxGreen" if green else "iconBox")
     ic.setFixedSize(50, 50)
