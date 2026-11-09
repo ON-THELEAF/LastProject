@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 QWEN_REPO = "Qwen/Qwen3-VL-4B-Instruct"
-# 엔진이 쓰는 OCR 모델(bridgedocs.make_ocr / make_cjk_ocr). 검출 모델은 BD_OCR=server면 서버용.
-OCR_REC = ["korean_PP-OCRv5_mobile_rec", "PP-OCRv5_server_rec"]
+# 엔진이 쓰는 OCR 인식 모델(bridgedocs.make_ocr, 한국어용만). 검출 모델은 BD_OCR=server면 서버용.
+OCR_REC = ["korean_PP-OCRv5_mobile_rec"]
 
 
 def app_base() -> Path:
@@ -38,9 +38,27 @@ def setup_offline(base: Path) -> Path:
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["PADDLE_PDX_CACHE_HOME"] = str(_ascii_paddlex(models / "paddlex"))
     os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
-    os.environ.setdefault("BD_FORMS", str(Path(base) / "양식"))   # 사용자가 넣은 워드 양식을 두는 폴더
     os.environ.setdefault("BD_CUSTOM", str(Path(base) / "새 문서 종류.json"))   # 사용자가 확정한 새 문서 종류의 칸 목록
+    _install_folders(Path(base))
     return models
+
+
+SETTINGS = "설정.json"
+
+
+def _install_folders(base: Path) -> None:
+    """설치할 때 정한 폴더: 프로그램 옆 설정.json {"양식 폴더": "...", "저장 폴더": "..."}(없으면 기본값).
+    양식 폴더 기본값은 프로그램 옆 양식\\, 저장 폴더(읽기 결과·내보내기) 기본값은 문서\\BridgeDocs 결과."""
+    import json
+    try:
+        cfg = json.loads((base / SETTINGS).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        cfg = {}
+    cfg = cfg if isinstance(cfg, dict) else {}
+    if cfg.get("양식 폴더"):
+        os.environ["BD_FORMS"] = str(cfg["양식 폴더"])
+    os.environ.setdefault("BD_FORMS", str(base / "양식"))
+    os.environ["BD_OUT"] = str(cfg.get("저장 폴더") or os.environ.get("BD_OUT") or Path.home() / "Documents" / "BridgeDocs 결과")
 
 
 def _ascii_paddlex(src: Path) -> Path:

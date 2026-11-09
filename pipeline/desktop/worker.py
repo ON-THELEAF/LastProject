@@ -53,9 +53,11 @@ class ReadJob(QObject):
     finished = Signal(int, int)
     queued = Signal(int)       # 대기 순번이 바뀔 때(0이면 이제 시작)
 
-    def __init__(self, files: list[Path], out_dir: Path, deskew: bool, engine, process=None, rejected=()):
+    def __init__(self, files: list[Path], out_dir: Path, deskew: bool, engine, process=None, rejected=(), want=None, group=True):
         super().__init__()
-        self.groups = bd.group_documents(files)
+        # group=False: 사용자가 쪽 묶음을 거절함 → 이미지마다 따로 읽는다
+        self.groups = bd.group_documents(files) if group else [[Path(f)] for f in files]
+        self.want = list(want or [])       # 사용자가 고른 칸 이름(비면 AI가 정함)
         self.rejected = list(rejected)     # [(파일 이름, 사유)]: 읽지 않고 실패로 알린다
         self.queue_position = 0            # 0이면 바로 시작, n이면 앞에 작업 n개가 끝나야 시작
         self.out_dir = Path(out_dir)
@@ -104,7 +106,8 @@ class ReadJob(QObject):
             stem = self._stem(paths)
             self.progress.emit(f"{i}/{len(self.groups)} 읽는 중: {stem}")
             try:
-                r = self.process(paths, model, proc, ocr, deskew=self.deskew, stop=self._cancel.is_set)
+                extra = {"want": self.want} if self.want else {}
+                r = self.process(paths, model, proc, ocr, deskew=self.deskew, stop=self._cancel.is_set, **extra)
             except bd.Cancelled:
                 return
             except ValueError as err:

@@ -80,20 +80,20 @@ def owners_text(pairs):
     return ", ".join(f"{n}({s})" if s else n for n, s in pairs)
 
 
-GRADE_DROP = re.compile(r"hsk|topik|jlpt|level|band|score|급|级|級|점|\s|[()（）]", re.I)
+GRADE_DROP = re.compile(r"topik|level|band|score|급|점|\s|[()（）]", re.I)
 CHOICES = ("자격증", "수료증", "성적증명서", "기타")
 # 증명서 종류 낱말(소문자). 앞에 있는 종류가 우선: 성적표에도 '합격'·'certificate'가, 수료증에도 '인정'이 나온다
-CHOICE_WORDS = ((("수료", "completion", "修了", "结业", "結業"), "수료증"), (("성적", "score", "report", "transcript", "成绩", "成績"), "성적증명서"),
-                (("자격", "합격", "인정", "certificate", "認定", "合格", "证书", "證書"), "자격증"))
+CHOICE_WORDS = ((("수료", "completion"), "수료증"), (("성적", "score", "report", "transcript"), "성적증명서"),
+                (("자격", "합격", "인정", "certificate"), "자격증"))
 
 
 SEAL_TAIL = re.compile(r"\s*[\[(（]([^\[\]()（）]{0,2})[\])）]?\s*$")
 
 
 def strip_seal(a):
-    """이름 뒤 도장 표시 조각을 뺀다(스캔 잡음으로 '[E]', '(제)', '[団'처럼 읽힘). 법인 표시 (주)·(재)·(株)는 남긴다."""
+    """이름 뒤 도장 표시 조각을 뺀다(스캔 잡음으로 '[E]', '(제)'처럼 읽힘). 법인 표시 (주)·(재)는 남긴다."""
     m = SEAL_TAIL.search(a)
-    return a[:m.start()] if m and m[1].strip() not in ("주", "재", "株", "유", "사") and len(a) > m.end() - m.start() + 1 else a
+    return a[:m.start()] if m and m[1].strip() not in ("주", "재", "유", "사") and len(a) > m.end() - m.start() + 1 else a
 
 
 def person_key(s):
@@ -102,9 +102,8 @@ def person_key(s):
 
 
 def grade_key(s):
-    """등급 비교용: 五级 = 5级 = 5급 = Level 5 → '5'. N2 → 'n2', 6.5 → '6.5'."""
-    s = "".join(str(ZH_NUM_VAL[c]) if c in ZH_NUM_VAL else c for c in (s or ""))
-    return GRADE_DROP.sub("", s).casefold()
+    """등급 비교용: 5급 = Level 5 → '5', 6.5 → '6.5'."""
+    return GRADE_DROP.sub("", s or "").casefold()
 
 
 def norm(kind, s):
@@ -146,19 +145,19 @@ def clean(kind, ans):
         m = re.search(r"\d[\d,]*", a)
         return m.group().rstrip(",") if m else a
     if kind == "date":
-        m = re.search(r"(\d{4})\s*[-./년年]\s*(\d{1,2})\s*[-./월月]\s*(\d{1,2})", a)
+        m = re.search(r"(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})", a)
         if m:
             return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
-        ds = any_dates(a)      # 'March 12, 2025', '令和7年3月12日' 같은 답
+        ds = any_dates(a)      # 'March 12, 2025' 같은 답
         return f"{ds[0][0]}-{ds[0][1]:02d}-{ds[0][2]:02d}" if ds else a
-    if kind == "choice":     # 원문 언어로 답해도(结业证书, 認定書, Certificate of Completion) 세 종류 중 하나로
+    if kind == "choice":     # 영어로 답해도(Certificate of Completion) 세 종류 중 하나로
         low = a.casefold()
         for words, val in CHOICE_WORDS + ((("기타",), "기타"),):
             if any(w in low for w in words):
                 return val
         return a
     if kind == "person":
-        a = re.sub(r"^(성명|이름|Name|氏名|姓名)\s*[:：]?\s*", "", a, flags=re.I)
+        a = re.sub(r"^(성명|이름|Name)\s*[:：]?\s*", "", a, flags=re.I)
         return strip_seal(a).strip("\"“”'")
     if kind == "flag":
         return "있음" if "있" in a else "없음" if "없" in a else a
@@ -220,26 +219,6 @@ def ocr_items(ocr, path):
         b = [float(v) for v in b] if len(b) == 4 and not hasattr(b[0], "__len__") else [min(p[0] for p in b), min(p[1] for p in b), max(p[0] for p in b), max(p[1] for p in b)]
         out.append({"text": t, "x0": b[0], "x1": b[2], "y0": b[1], "y1": b[3], "cx": (b[0] + b[2]) / 2, "cy": (b[1] + b[3]) / 2, "score": float(sc)})
     return out
-
-
-_CJK_OCR = None
-
-
-def make_cjk_ocr():
-    """중국어·일본어·영어 OCR(PP-OCRv5 서버 인식 모델). 한국어 모델은 가나·한자를 읽지 못한다. 처음 필요할 때 한 번만 띄운다."""
-    global _CJK_OCR
-    if _CJK_OCR is None:
-        from paddleocr import PaddleOCR
-        _CJK_OCR = PaddleOCR(text_detection_model_name=OCR_DET, text_recognition_model_name="PP-OCRv5_server_rec",
-                             use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False,
-                             text_det_limit_type="max", text_det_limit_side_len=1280)
-    return _CJK_OCR
-
-
-def ocr_quality(items):
-    """OCR이 자신 있게 읽은 글자 수(신뢰도 × 글자 수의 합). 글자 체계가 맞지 않는 모델은 대부분을 빈칸으로 내서 작다
-    (일본어 증명서: 한국어 모델 평균 신뢰도는 0.95로 높았지만 읽은 글자가 거의 없었다)."""
-    return sum(i.get("score", 1.0) * len(i["text"].strip()) for i in items)
 
 
 def lines_xy(items, tol=10):
@@ -669,8 +648,8 @@ V2Q["store_lease"] = {
 V2Q["cert"] = {
     "cert_kind": "이 문서가 자격증(합격증·인정서 포함), 수료증, 성적증명서(점수 보고서) 중 무엇인지 그 이름 하나만 적으세요. 셋 다 아니면 '기타'.",
     "cert_holder": "이 증명서를 받은 사람(취득자·수험자·수료자)의 이름을 문서에 적힌 글자 그대로 적으세요. 번역하거나 로마자로 바꾸지 마세요. 발급기관장·서명자 이름이 아닙니다.",
-    "cert_title": "자격·시험·과정의 이름을 문서에 적힌 그대로 적으세요(예: 정보처리기사, TOEIC, 日本語能力試験). 문서 제목('자격증', 'Certificate')만 적지 마세요.",
-    "cert_grade": "이 증명서의 등급 또는 점수 값 하나만 짧게 적으세요(예: 1급, N2, 850, 6.5, 五级). 다른 글자는 적지 마세요. 등급·점수가 없으면 '없음'.",
+    "cert_title": "자격·시험·과정의 이름을 문서에 적힌 그대로 적으세요(예: 정보처리기사, TOEIC). 문서 제목('자격증', 'Certificate')만 적지 마세요.",
+    "cert_grade": "이 증명서의 등급 또는 점수 값 하나만 짧게 적으세요(예: 1급, 850, 6.5). 다른 글자는 적지 마세요. 등급·점수가 없으면 '없음'.",
     "cert_issuer": "이 증명서를 발급한 기관 이름을 문서에 적힌 그대로 적으세요.",
     "cert_date": "자격을 취득(합격·수료)한 날짜를 YYYY-MM-DD 형식으로 적으세요. 성적표는 시험일입니다. 생년월일·발급일이 아닙니다(그 날짜가 없을 때만 발급일).",
     "cert_no": "증명서 번호(자격번호·인정번호·등록번호)를 문서에 적힌 그대로 적으세요. 없으면 '없음'.",
@@ -777,20 +756,17 @@ DATE_ANY = re.compile(r"(?<!\d)((?:19|20)\d{2})(?:\s*년\s*|\s*[.\-/]\s*|\s+)(\d
 FLAG_WORD = {"seizure_flag": "압류", "bldg_violation": "위반건축물"}   # 있음/없음 칸을 페이지 글자로 확인하는 키워드
 # '없음'이 정상일 수 있는 칸: 페이지에 이 칸 이름이 보이면 '없음'은 틀린 답이다
 EMPTY_OK = {"mortgage_amount": ["채권최고액"], "mortgage_holder": ["채권최고액"],
-            "cert_grade": ["등급", "점수", "급수", "Score", "Band", "Grade", "Level", "Result", "レベル", "级别", "級別", "成绩"],
-            "cert_no": ["번호", "No.", "Number", "番号", "编号", "編號"]}
+            "cert_grade": ["등급", "점수", "급수", "Score", "Band", "Grade", "Level", "Result"],
+            "cert_no": ["번호", "No.", "Number"]}
 # 시험별 등급·점수 범위(포트폴리오·국제처에 자주 오는 시험만). 범위를 벗어나면 잘못 읽은 값이다
 GRADE_RANGE = [("toeic", lambda g: g.isdigit() and 10 <= int(g) <= 990 and int(g) % 5 == 0, "TOEIC 점수는 10~990, 5점 단위"),
                ("ielts", lambda g: re.fullmatch(r"\d(\.[05])?", g) is not None and float(g) <= 9, "IELTS 밴드는 0~9, 0.5 단위"),
                ("topik", lambda g: g in "123456" and len(g) == 1, "TOPIK 등급은 1~6급"),
-               ("日本語能力", lambda g: g in ("n1", "n2", "n3", "n4", "n5"), "JLPT 레벨은 N1~N5"),
-               ("hsk", lambda g: g.isdigit() and 1 <= int(g) <= 9, "HSK 등급은 1~9급"),
-               ("汉语水平", lambda g: g.isdigit() and 1 <= int(g) <= 9, "HSK 등급은 1~9급"),
                ("컴퓨터활용능력", lambda g: g in ("1", "2"), "컴퓨터활용능력은 1·2급")]
-# 증명서는 양식이 제각각이라 라벨 검사를 못 한다. 대신 값이 페이지 글자에 그대로 있어야 한다(없는 등급을 지어낸 경우: 수료증에 'N2')
+# 증명서는 양식이 제각각이라 라벨 검사를 못 한다. 대신 값이 페이지 글자에 그대로 있어야 한다(없는 등급을 지어낸 경우: 수료증에 '1급')
 NEED_ON_PAGE = {"cert_holder", "cert_title", "cert_grade", "cert_issuer", "cert_date", "cert_no"}   # 시험·과정 이름도(오류 주입에서 유일하게 놓친 칸)
 # 증명서에서 취득일과 헷갈리는 날짜의 칸 이름(공백 없이, 소문자)
-DATE_DECOY = ["생년월일", "발급일", "dateofbirth", "birth", "dateofissue", "issued", "生年月日", "発行日", "出生日期", "发证日期"]
+DATE_DECOY = ["생년월일", "발급일", "dateofbirth", "birth", "dateofissue", "issued"]
 ROLE_ORDER = {"seller_name": 0, "buyer_name": 1}     # 서명란: '성명 이름' 줄에서 매도인이 첫째, 매수인이 둘째
 # 페이지 OCR 캐시 키에 들어간다: OCR 설정이 바뀌면 옛 캐시를 쓰지 않도록 올린다
 OCR_DET = "PP-OCRv5_server_det" if os.environ.get("BD_OCR") == "server" else "PP-OCRv5_mobile_det"
@@ -855,28 +831,19 @@ def dates_in(text):
 
 EN_MON = {m[:3].lower(): i for i, m in enumerate(["January", "February", "March", "April", "May", "June", "July", "August",
                                                    "September", "October", "November", "December"], 1)}
-ERA = {"令和": 2018, "平成": 1988, "昭和": 1925}
-ZH_NUM_VAL = {c: i for i, c in enumerate("一二三四五六七八九", 1)}
 _MON = r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
 DATE_FORMS = [   # (패턴, 연·월·일 그룹 순서) — 한국식은 dates_in이 맡는다
-    (re.compile(r"((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?"), "ymd"),
-    (re.compile(r"(令和|平成|昭和)\s*(\d{1,2}|元)\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?"), "era"),
     (re.compile(r"(\d{1,2})(?:st|nd|rd|th)?\s+" + _MON + r",?\s+((?:19|20)\d{2})", re.I), "dmy"),
     (re.compile(_MON + r"\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})", re.I), "mdy"),
 ]
-# shortcut: 한자 숫자 날짜(二〇二五年三月十二日)는 읽지 못한다. 실제 중국 증명서에서 나오면 여기에 추가.
 
 
 def any_dates(text):
-    """텍스트 안의 날짜(한국어·영어·일본어·중국어 표기) → [(연, 월, 일, 시작 위치)]. 없는 날짜는 뺀다."""
+    """텍스트 안의 날짜(한국어·영어 표기) → [(연, 월, 일, 시작 위치)]. 없는 날짜는 뺀다."""
     out = [(int(m[1]), int(m[2]), int(m[3]), m.start()) for m in dates_in(text)]
     for pat, order in DATE_FORMS:
         for m in pat.finditer(text):
-            if order == "ymd":
-                y, mo, d = int(m[1]), int(m[2]), int(m[3])
-            elif order == "era":
-                y, mo, d = ERA[m[1]] + (1 if m[2] == "元" else int(m[2])), int(m[3]), int(m[4])
-            elif order == "dmy":
+            if order == "dmy":
                 y, mo, d = int(m[3]), EN_MON[m[2][:3].lower()], int(m[1])
             else:
                 y, mo, d = int(m[3]), EN_MON[m[1][:3].lower()], int(m[2])
@@ -885,34 +852,12 @@ def any_dates(text):
     return out
 
 
-JA_ONLY = ("証", "検", "験", *ERA)        # 일본식 한자·연호(중국어는 证/證, 检/檢, 验/驗)
-ZH_ONLY = set("证书级汉语试绩兹发颁")      # 간체자: 일본어에는 안 쓴다
-
-
-def lang_guess(page_lines_list):
-    """-> (언어 코드, 확실한지). 한자만 있고 일본식·간체 신호가 둘 다 없으면 ('zh', False)."""
-    text = " ".join(L["text"] for lines in page_lines_list for L in lines)
-    kana = sum("぀" <= c <= "ヿ" for c in text)
-    hangul = sum("가" <= c <= "힣" for c in text)
-    han = sum("一" <= c <= "鿿" for c in text)
-    if kana >= 3:
-        return "ja", True
-    if hangul >= 10 and hangul >= han:
-        return "ko", True
-    if han < 5:
-        return "en", True
-    ja, zh = any(w in text for w in JA_ONLY), any(c in ZH_ONLY for c in text)
-    return ("ja", True) if ja and not zh else ("zh", zh and not ja)
-
-
 def lang_field(page_lines_list):
-    """증명서 '문서 언어' 칸. 일본어인지 중국어인지 가릴 신호가 없으면 사람이 고르게 한다."""
-    code, sure = lang_guess(page_lines_list)
-    other = LANG_LABEL["zh" if code == "ja" else "ja"]
-    review = {"status": "review", "reason": "한자만 있어 일본어·중국어를 가리지 못함", "candidates": [LANG_LABEL["ja"], LANG_LABEL["zh"]],
-              "compare": other}
+    """증명서 '문서 언어' 칸: 한글이 10자 이상이면 한국어, 아니면 영어."""
+    text = " ".join(L["text"] for lines in page_lines_list for L in lines)
+    code = "ko" if sum("가" <= c <= "힣" for c in text) >= 10 else "en"
     return {"key": "cert_lang", "label": FIELD_LABEL["cert_lang"], "kind": "text", "value": LANG_LABEL[code],
-            "status": "auto", "reason": "", "candidates": [], "page": 1, "line_box": None, "compare": "", **({} if sure else review)}
+            "status": "auto", "reason": "", "candidates": [], "page": 1, "line_box": None, "compare": ""}
 
 
 def occurrences(kind, v, lines):
@@ -936,11 +881,10 @@ def occurrences(kind, v, lines):
         want = norm("date", v)
         for i, L in enumerate(lines):
             out += [(i, pos) for y, mo, d, pos in any_dates(L["text"]) if (y, mo, d) == want]
-    elif kind == "grade":     # 등급은 낱말 단위로(증명서 번호 'N2…' 안의 'N2'를 등급으로 세지 않도록). 五级 = 5级 = Level 5
+    elif kind == "grade":     # 등급은 낱말 단위로(증명서 번호 'N2…' 안의 '1급'을 등급으로 세지 않도록). 5급 = Level 5
         key = norm(kind, v)
         out += [(i, 0) for i, L in enumerate(lines) if key and any(grade_key(t) == key for t in re.split(r"[\s:：,/|]+", L["text"]))]
     elif kind == "person":    # 고유 이름: 글자만 비교(대소문자·공백 무시). 거친 스캔에서 OCR이 한 글자쯤 흐리게 읽어도 찾은 것으로 본다
-        # \ud55c \uae00\uc790 \ub2e4\ub978 \uac83(\u4f50\u85e4\u5065\u592a \u2260 \u4f50\u85e4\u5065\u5927)\uc740 \ucc3e\uc740 \uac83\uc774 \uc544\ub2c8\ub2e4. OCR\uc774 \ud750\ub9ac\uac8c \uc77d\uc740 \uacbd\uc6b0\ub294 compute_checks\uac00 \ud655\ub300 \uc7ac\ud310\ub3c5\uc73c\ub85c \uac00\ub9b0\ub2e4
         key = norm(kind, v)
         out += [(i, 0) for i, L in enumerate(lines) if key and key in norm(kind, L["text"])]
     else:      # name / text: OCR 공백 차이를 무시하고 찾는다
@@ -958,10 +902,9 @@ def occurrences(kind, v, lines):
     return out
 
 
-NAME_PREFIX = ("성명", "이름", "name", "氏名", "姓名", "名前", "소지자", "수험자", "수료자")
-NAME_SUFFIX = ("殿", "様", "님", "귀하", "(인)", "印")
+NAME_PREFIX = ("성명", "이름", "name", "소지자", "수험자", "수료자")
+NAME_SUFFIX = ("님", "귀하", "(인)")
 KO_PARTICLE = re.compile(r"(에|을|를|이|가|의|은|는|과|와|으로|로|에서)(?![가-힣a-z])")
-HIRAGANA = re.compile(r"[ぁ-ゟ]")
 
 
 def standalone(kind, v, lines):
@@ -976,11 +919,9 @@ def standalone(kind, v, lines):
         t = L["text"].casefold()
         for m in pat.finditer(t):
             a, b = m.start(), m.end()
-            left_ok = (a == 0 or not t[a - 1].isalpha() or squash(t[:a]).endswith(labels)
-                       or (HIRAGANA.match(t[a - 1]) and not HIRAGANA.match(t[a])))            # 者は日本語…
+            left_ok = a == 0 or not t[a - 1].isalpha() or squash(t[:a]).endswith(labels)
             right_ok = (b == len(t) or not t[b].isalpha() or t[b:].startswith(NAME_SUFFIX)
-                        or (re.match(r"[가-힣]", t[b - 1]) and KO_PARTICLE.match(t, b))          # …능력에 합격
-                        or (HIRAGANA.match(t[b]) and not HIRAGANA.match(t[b - 1])))            # …試験に合格
+                        or (re.match(r"[가-힣]", t[b - 1]) and KO_PARTICLE.match(t, b)))          # …능력에 합격
             if left_ok and right_ok:
                 return True
     return False
@@ -1012,7 +953,7 @@ def check_field(kind, key, value, lines):
     if kind == "choice":
         if not format_ok(kind, v):
             return out(False, "contradict", reason="문서 종류를 고르지 못함: " + v[:20])
-        # 위에서부터 처음 종류 낱말이 나온 줄(대개 제목)로 정한다. 칸 이름('合格·修了日', '考试/结业日期')에 끌려가지 않도록
+        # 위에서부터 처음 종류 낱말이 나온 줄(대개 제목)로 정한다. 칸 이름('합격연월일')에 끌려가지 않도록
         seen = next(([val for words, val in CHOICE_WORDS if any(w in sq for w in words)] for sq in (squash(L["text"]).casefold() for L in lines)
                      if any(w in sq for words, _ in CHOICE_WORDS for w in words)), [])
         if not seen:
@@ -1053,7 +994,7 @@ def check_field(kind, key, value, lines):
         return out(True, "pass", label_ok=None)
     occ = occurrences(kind, v, lines)
     if not occ and kind == "date" and key in NEED_ON_PAGE:
-        # 월·일은 맞고 연도만 다른 날짜가 페이지에 있으면 연도 환산 실수(令和·平成 연호)다.
+        # 월·일은 맞고 연도만 다른 날짜가 페이지에 있으면 연도만 잘못 읽은 것이다.
         # 증명서만: 임대차는 시작일·종료일의 월·일이 같아서 오탐한다(합성 임대차 s07, 2026-10-25)
         y, mo, d = norm("date", v)
         near = [f"{yy}-{mm:02d}-{dd:02d}" for L in lines for yy, mm, dd, _ in any_dates(L["text"]) if (mm, dd) == (mo, d) and yy != y]
@@ -1321,7 +1262,7 @@ def compute_checks(gt, docs, answers, cache, crops=None):
             c = check_field(f["kind"], key, r["ans"], cache[doc["pages"][f["page"] - 1]])
             if (f["kind"] in ("person", "name", "owners") and c["reason"].startswith("페이지에서 값을 못 찾음") and r.get("ans2")
                     and norm(f["kind"], clean(f["kind"], r["ans2"])) == norm(f["kind"], clean(f["kind"], r["ans"]))):
-                # OCR이 흐리게 읽어(일본어 蓮→莲, センター→セ一) 페이지 글자에 없어도, 칸을 확대해 따로 읽은 값이 같으면 인쇄된 값으로 본다
+                # OCR이 흐리게 읽어 페이지 글자에 없어도, 칸을 확대해 따로 읽은 값이 같으면 인쇄된 값으로 본다
                 c = {**c, "exists": True, "state": "pass", "reason": ""}
             vals[key], per[key] = clean(f["kind"], r["ans"]), c
             if c["ys"] is not None:
@@ -1942,18 +1883,14 @@ def build_store_lease(rng, _, v=None):
     return pages[:1], fields
 
 
-# ───────── 자격증·수료증·성적증명서(한국어·영어·일본어·중국어) ─────────
+# ───────── 자격증·수료증·성적증명서(한국어·영어) ─────────
 # 국제처(다국어 증명서)와 전공·교양 포트폴리오(자격증)가 같이 쓰는 문서 종류. 양식이 기관마다 달라 칸 좌표 없이 질문으로 읽는다.
 # 아래 기관·시험 이름은 시험용 가짜 문서를 만들 때만 쓴다(실제 기관 양식을 흉내 내지 않는 단순한 틀).
-JA_SUR, JA_GIVEN = "佐藤 鈴木 高橋 田中 伊藤 渡辺 山本 中村 小林 加藤".split(), "健太 翔太 美咲 陽菜 大輝 結衣 拓海 さくら 蓮 葵".split()
-ZH_SUR, ZH_GIVEN = "王 李 张 刘 陈 杨 赵 黄 周 吴".split(), "伟 芳 娜 敏 静 磊 洋 婷 浩然 子涵 欣怡 宇轩".split()
 EN_FIRST, EN_LAST = "Emily Michael Sarah David Olivia James Sophia Daniel".split(), "Johnson Smith Brown Garcia Miller Davis Wilson Taylor".split()
 ROMA_SUR = {"김": "KIM", "이": "LEE", "박": "PARK", "최": "CHOI", "정": "JUNG", "강": "KANG", "조": "CHO", "윤": "YOON"}
-ZH_NUM = "一二三四五六七八九"
 EN_MONTH = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-CERT_FONT = {"ko": "K", "en": "E", "ja": "J", "zh": "Z"}
-CERT_CSS = """@font-face {font-family: J; src: url(YuGothM.ttc);} @font-face {font-family: Z; src: url(msyh.ttc);}
-@font-face {font-family: E; src: url(georgia.ttf);} @font-face {font-family: E; src: url(georgiab.ttf); font-weight: bold;}
+CERT_FONT = {"ko": "K", "en": "E"}
+CERT_CSS = """@font-face {font-family: E; src: url(georgia.ttf);} @font-face {font-family: E; src: url(georgiab.ttf); font-weight: bold;}
 .frame {border: 3px double #333; padding: 18px 26px;} .big {font-size: 24pt; text-align: center; letter-spacing: 4px; margin: 10px 0 18px 0;}
 .mid, .mid .v {font-size: 11pt; line-height: 1.8;} td, th {font-size: 10pt;} .right {text-align: right;} .center {text-align: center;} .seal {color: #b00000; font-weight: bold;}"""
 # (언어, 문서 종류, 시험·과정 이름 후보, 등급 후보, 발급기관 후보)
@@ -1965,18 +1902,10 @@ CERT_KINDS = [
     ("en", "성적증명서", ["TOEIC"], [str(rs) for rs in range(450, 991, 5)], ["ETS Global"]),
     ("en", "성적증명서", ["IELTS Academic"], ["5.5", "6.0", "6.5", "7.0", "7.5", "8.0"], ["IELTS Test Centre"]),
     ("en", "수료증", ["Data Science Bootcamp", "Global Business Program", "Summer English Program"], [""], ["Northfield University", "Lakeside College"]),
-    ("ja", "자격증", ["日本語能力試験"], ["N1", "N2", "N3", "N4", "N5"], ["国際日本語教育協会"]),
-    ("ja", "수료증", ["日本語研修コース", "ビジネス日本語講座"], [""], ["東和大学 国際センター", "青葉大学 留学生センター"]),
-    ("zh", "성적증명서", ["汉语水平考试(HSK)"], [f"{ZH_NUM[i]}级" for i in range(2, 6)], ["中文国际测试中心"]),
-    ("zh", "수료증", ["汉语进修项目", "中国文化研修班"], [""], ["华东大学 国际教育学院", "北方师范大学 留学生院"]),
 ]
 
 
 def cert_name(rng, lang):
-    if lang == "ja":
-        return f"{rng.choice(JA_SUR)} {rng.choice(JA_GIVEN)}"
-    if lang == "zh":
-        return rng.choice(ZH_SUR) + rng.choice(ZH_GIVEN)
     if lang == "en":
         if rng.random() < 0.5:      # 한국 학생의 영문 성적표(로마자 대문자)
             sur = rng.choice(list(ROMA_SUR))
@@ -1986,14 +1915,10 @@ def cert_name(rng, lang):
 
 
 def cert_date_text(d, lang, rng):
-    """언어별 날짜 표기(일본 연호·영문 월 이름 포함) — 엔진이 이 표기들을 모두 날짜로 알아봐야 한다."""
+    """언어별 날짜 표기(영문 월 이름 포함) — 엔진이 이 표기들을 모두 날짜로 알아봐야 한다."""
     if lang == "ko":
         return f"{d.year}년 {d.month}월 {d.day}일" if rng.random() < 0.7 else f"{d.year}. {d.month:02d}. {d.day:02d}."
-    if lang == "en":
-        return f"{EN_MONTH[d.month - 1]} {d.day}, {d.year}" if rng.random() < 0.5 else f"{d.day} {EN_MONTH[d.month - 1]} {d.year}"
-    if lang == "ja" and d.year >= 2019 and rng.random() < 0.5:
-        return f"令和{d.year - 2018}年{d.month}月{d.day}日"
-    return f"{d.year}年{d.month}月{d.day}日"
+    return f"{EN_MONTH[d.month - 1]} {d.day}, {d.year}" if rng.random() < 0.5 else f"{d.day} {EN_MONTH[d.month - 1]} {d.year}"
 
 
 def cert_values(rng, kind_idx=None):
@@ -2003,8 +1928,7 @@ def cert_values(rng, kind_idx=None):
     if got > date(2026, 10, 20):
         got = date(2026, rng.randint(1, 9), got.day)
     holder = cert_name(rng, "en" if lang == "ko" and ckind == "성적증명서" else lang)     # TOPIK은 외국인 → 로마자 이름
-    no = {"ko": f"{got.year % 100}{rng.randint(10**8, 10**9 - 1)}", "en": f"{rng.choice('ABCKM')}{rng.randint(10**7, 10**8 - 1)}",
-          "ja": f"N{rng.randint(10**7, 10**8 - 1)}", "zh": f"H{got.year}{rng.randint(10**6, 10**7 - 1)}"}[lang]
+    no = {"ko": f"{got.year % 100}{rng.randint(10**8, 10**9 - 1)}", "en": f"{rng.choice('ABCKM')}{rng.randint(10**7, 10**8 - 1)}"}[lang]
     grade = rng.choice(grades)
     return {"cert_kind": ckind, "cert_holder": holder, "cert_title": rng.choice(titles), "cert_grade": grade or "없음",
             "cert_issuer": rng.choice(issuers), "cert_date": got.isoformat(), "cert_no": no, "cert_lang": LANG_LABEL[lang]}
@@ -2017,15 +1941,8 @@ L10N = {   # 언어별 칸 이름과 문장
     "en": {"name": "Name", "birth": "Date of Birth", "title": "Program / Test", "grade": "Score", "no": "Certificate No.", "date": "Date Completed",
            "issued": "Date of Issue", "head": {"자격증": "CERTIFICATE", "수료증": "CERTIFICATE OF COMPLETION", "성적증명서": "SCORE REPORT"},
            "body": "This is to certify that the above person has {what} {title}."},
-    "ja": {"name": "氏 名", "birth": "生年月日", "title": "試験・課程", "grade": "レベル", "no": "認定番号", "date": "合格・修了日", "issued": "発行日",
-           "head": {"자격증": "認 定 書", "수료증": "修 了 証 書", "성적증명서": "成 績 証 明 書"},
-           "body": "上記の者は{title}に{what}したことを証明します。"},
-    "zh": {"name": "姓 名", "birth": "出生日期", "title": "考试 / 项目", "grade": "级 别", "no": "证书编号", "date": "考试 / 结业日期", "issued": "发证日期",
-           "head": {"자격증": "证 书", "수료증": "结 业 证 书", "성적증명서": "成 绩 报 告"},
-           "body": "兹证明上述人员已{what}{title}。"},
 }
-WHAT = {"ko": {"자격증": "에 합격", "수료증": "을 수료", "성적증명서": "에 응시"}, "en": {"자격증": "passed", "수료증": "successfully completed", "성적증명서": "taken"},
-        "ja": {"자격증": "合格", "수료증": "修了", "성적증명서": "受験"}, "zh": {"자격증": "通过", "수료증": "完成", "성적증명서": "参加"}}
+WHAT = {"ko": {"자격증": "에 합격", "수료증": "을 수료", "성적증명서": "에 응시"}, "en": {"자격증": "passed", "수료증": "successfully completed", "성적증명서": "taken"}}
 
 
 def cert_pages(v, rng):
@@ -2050,12 +1967,12 @@ def cert_pages(v, rng):
         lines = "".join(f'<p class="mid">{k} : <span class="v">{val}</span></p>' for k, val in rows)
         html = (f'<div class="frame" style="font-family:{font}"><p class="big">{t["head"][kind]}</p>'
                 f'{lines}<p class="mid" style="margin-top:18px">{body}</p><p class="center mid" style="margin-top:24px">{t["issued"]} : {dt(issued)}</p>'
-                f'<p class="center mid" style="font-size:14pt">{v["cert_issuer"]} <span class="seal">[印]</span></p></div>')
+                f'<p class="center mid" style="font-size:14pt">{v["cert_issuer"]} <span class="seal">(인)</span></p></div>')
     else:
         cells = "".join(f'<tr><th style="font-family:{font}">{k}</th><td class="v" style="font-family:{font}">{val}</td></tr>' for k, val in rows)
         html = (f'<div style="font-family:{font}"><p class="big">{t["head"][kind]}</p><p class="center mid">{v["cert_issuer"]}</p>'
                 f'<table>{cells}</table><p class="mid">{body}</p><p class="right mid">{t["issued"]} : {dt(issued)}</p>'
-                f'<p class="right mid">{v["cert_issuer"]} <span class="seal">[印]</span></p></div>')
+                f'<p class="right mid">{v["cert_issuer"]} <span class="seal">(인)</span></p></div>')
     return render_html(html, CERT_CSS)[:1]
 
 
@@ -2195,7 +2112,7 @@ DOC_FIELDS = {   # 문서 종류별 칸과 종류(kind). 정답 파일 없이도
              "cert_date": "date", "cert_no": "text", "cert_lang": "text"},
 }
 COMPUTED = {"cert_lang"}     # 모델에 묻지 않고 엔진이 정하는 칸(문서 언어)
-LANG_LABEL = {"ko": "한국어", "en": "영어", "ja": "일본어", "zh": "중국어"}
+LANG_LABEL = {"ko": "한국어", "en": "영어"}
 LANG_CODE = {v: k for k, v in LANG_LABEL.items()}
 FIELD_LABEL = {
     "property_address": "소재지", "owner_name": "소유자", "ownership_change_date": "소유권 접수일", "seizure_flag": "압류·가압류",
@@ -2214,7 +2131,7 @@ FIELD_LABEL = {
 DOC_TYPE_WORDS = [("store_lease", ["상가건물임대차"]), ("lease", ["주택임대차"]), ("ledger", ["건축물대장"]),
                   ("registry", ["등기사항", "갑구", "을구"]), ("sale", ["매매계약서", "매도인"]),
                   ("cert", ["자격증", "수료증", "합격증", "성적증명", "인증서", "certificate", "certify", "scorereport", "testreport",
-                            "transcript", "diploma", "証明", "認定", "修了", "合格", "证书", "證書", "证明", "成绩", "結業", "结业"])]
+                            "transcript", "diploma"])]
 FIELD_PAGE_WORDS = {"owner_name": ["갑구", "소유자"], "ownership_change_date": ["갑구", "소유자"], "seizure_flag": ["갑구"],
                     "mortgage_amount": ["을구", "근저당"], "mortgage_holder": ["을구", "근저당"]}
 
@@ -2287,21 +2204,6 @@ def read_pages(paths, ocr, deskew=False):
             pg.save(tmp)
             lines_list[i] = lines_xy(ocr_items(ocr, tmp))
     return pages, lines_list, routes
-
-
-def reread_cjk(pages, lines_list, routes):
-    """중국어·일본어 문서일 수 있을 때: OCR로 읽은 쪽만 중·일 모델로 다시 읽어, 글자 신뢰도가 더 높은 쪽을 쓴다.
-    (한국어 모델은 가나·한자를 엉뚱한 한글로 읽고, 중·일 모델은 한글을 읽지 못해 신뢰도로 갈린다)"""
-    out = list(lines_list)
-    for i, r in enumerate(routes):
-        if r != "ocr":
-            continue
-        tmp = Path(tempfile.gettempdir()) / "_bd_page_cjk.png"
-        pages[i].save(tmp)
-        cjk = ocr_items(make_cjk_ocr(), tmp)
-        if ocr_quality(cjk) > 1.15 * ocr_quality([q for L in lines_list[i] for q in L.get("parts", [])]):
-            out[i] = lines_xy(cjk)
-    return out
 
 
 JOINT_PRE = ("이것은 문서 이미지에 인쇄·기재된 글자를 그대로 옮겨 적는 작업입니다. 아래 항목마다 값을 찾아 "
@@ -2395,6 +2297,19 @@ def save_custom_type(name, labels):
     return data
 
 
+def delete_custom_type(name):
+    """확정해 둔 새 문서 종류를 지운다(다음부터는 처음 보는 종류로 읽음)."""
+    data = custom_types(strict=True)
+    if name not in data:
+        raise ValueError(f"'{name}' 문서 종류가 없어요")
+    del data[name]
+    p = custom_path()
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, p)
+    return data
+
+
 def type_question():
     names = list(DOC_TYPE_LABEL.values()) + list(custom_types())
     return (TYPE_PRE + " 아래 목록 중 하나면 그 이름을 그대로 적고, 목록에 없으면 문서 제목(문서 이름)을 적으세요. "
@@ -2433,38 +2348,57 @@ def parse_json_obj(ans):
             for k, v in data.items() if str(k).strip() and v is not None} if isinstance(data, dict) else {}
 
 
-def custom_fields(model, proc, name, pages, lines_list, is_docx, check):
-    """새 문서 종류 읽기. 확정해 둔 칸이 있으면 그 칸을 두 번(사진+OCR, 사진만) 읽어 같으면 자동 확정,
-    처음 보는 종류면 AI가 칸을 골라 읽고 모두 사용자 확인. shortcut: 1쪽만 읽는다 — 여러 쪽 새 문서가 생기면 쪽마다 묻는다.
+def custom_fields(model, proc, name, pages, lines_list, is_docx, check, labels=None):
+    """새 문서 종류 읽기(모든 쪽). 칸 이름이 정해져 있으면(확정해 둔 종류, 또는 사용자가 읽기 전에 고른 칸 labels)
+    쪽마다 그 칸을 두 번(사진+OCR, 사진만) 읽어 같으면 자동 확정. 앞 쪽에서 찾은 칸은 뒤 쪽에서 다시 묻지 않는다.
+    처음 보는 종류면 AI가 쪽마다 칸을 골라 읽고(합쳐 15개까지) 모두 사용자 확인.
     -> (fields, 처음 보는 종류인지)"""
-    saved = custom_types().get(name)
-    check()
-    if saved:
-        q = JOINT_PRE + "\n".join(f'- "{lab}": 문서에 적힌 \'{lab}\'의 값' for lab in saved)
-        budget = 40 * len(saved) + 40
-        if is_docx:
-            first, second = parse_joint(ask_text(model, proc, docx_body(lines_list[0]) + "\n\n" + text_question(q), max_new=budget), saved), None
+    saved = list(labels) if labels else custom_types().get(name)
+    first, second, page_of = {}, {}, {}
+    for i in range(len(lines_list)):
+        check()
+        if saved:
+            todo = [lab for lab in saved if first.get(lab, "").strip() in ("", "없음")]
+            if not todo:
+                break
+            q = JOINT_PRE + "\n".join(f'- "{lab}": 문서에 적힌 \'{lab}\'의 값' for lab in todo)
+            budget = 40 * len(todo) + 40
+            if is_docx:
+                a, b = parse_joint(ask_text(model, proc, docx_body(lines_list[i]) + "\n\n" + text_question(q), max_new=budget), todo), None
+            else:
+                a = parse_joint(ask(model, proc, pages[i], with_ocr(q, lines_list[i]), max_new=budget)[0], todo)
+                check()
+                try:
+                    b = parse_joint(ask(model, proc, pages[i], q, max_new=budget)[0], todo)
+                except Exception:   # 두 번째 판독 실패: 그 칸들은 '한 번만 읽음'으로 사용자 확인
+                    b = None
+            for lab in todo:
+                v = a.get(lab, "")
+                if lab not in first or v.strip() not in ("", "없음"):
+                    first[lab], page_of[lab] = v, i + 1
+                    second.pop(lab, None)
+                    if b is not None:
+                        second[lab] = b.get(lab)
         else:
-            first = parse_joint(ask(model, proc, pages[0], with_ocr(q, lines_list[0]), max_new=budget)[0], saved)
-            check()
-            second = parse_joint(ask(model, proc, pages[0], q, max_new=budget)[0], saved)
-        labels = saved
-    else:
-        if is_docx:
-            first = parse_json_obj(ask_text(model, proc, docx_body(lines_list[0]) + "\n\n" + NEW_TYPE_Q, max_new=600))
-        else:
-            first = parse_json_obj(ask(model, proc, pages[0], with_ocr(NEW_TYPE_Q, lines_list[0]), max_new=600)[0])
-        second, labels = None, list(first)[:15]
+            if len(first) >= 15:
+                break
+            if is_docx:
+                got = parse_json_obj(ask_text(model, proc, docx_body(lines_list[i]) + "\n\n" + NEW_TYPE_Q, max_new=600))
+            else:
+                got = parse_json_obj(ask(model, proc, pages[i], with_ocr(NEW_TYPE_Q, lines_list[i]), max_new=600)[0])
+            for k, v in got.items():
+                if k not in first and len(first) < 15:
+                    first[k], page_of[k] = v, i + 1
     out = []
-    for lab in labels:
+    for lab in saved or list(first):
         v1 = first.get(lab, "")
-        v2 = second.get(lab) if second is not None else None
+        v2 = second.get(lab)
         same = v2 is not None and v1.strip() not in ("", "없음") and squash(v1) == squash(v2)
         reason = ("" if same else "처음 보는 문서 종류 — 칸 이름과 값을 확인하세요" if not saved
                   else f"두 번 읽은 값이 다름({v1[:20]} / {(v2 or '')[:20]})" if v2 else "한 번만 읽음 — 확인하세요")
         cands = [x for x in dict.fromkeys([v1, v2 or ""]) if x] if not same else []
         out.append({"key": lab, "label": lab, "kind": "text", "value": v1, "status": "auto" if same else "review", "reason": reason,
-                    "candidates": cands, "page": 1, "line_box": None, "compare": next((x for x in cands if x != v1), "")})
+                    "candidates": cands, "page": page_of.get(lab, 1), "line_box": None, "compare": next((x for x in cands if x != v1), "")})
     return out, not saved
 
 
@@ -2472,11 +2406,12 @@ class Cancelled(Exception):
     """사용자가 취소함: 읽던 문서는 버린다."""
 
 
-def process_document(paths, model, proc, ocr, deskew=False, stop=None, mode="field"):
+def process_document(paths, model, proc, ocr, deskew=False, stop=None, mode="field", want=None):
     """정답 없이 문서 하나를 처리한다. -> dict(source, files, route, doc_type, pages, fields[...], summary) 또는 error.
     fields 각 항목: key, label, kind, value, status('auto'=자동 확정 | 'review'=사람 확인), reason, candidates, page, line_box.
     stop: 부를 때마다 True면 Cancelled를 던진다(AI에게 묻기 전마다 확인).
-    mode: 'field' = 칸마다 묻기(+일부 칸 다시 읽기) | 'joint' = 쪽마다 두 번만 묻고 두 답이 다른 칸은 사용자 판단."""
+    mode: 'field' = 칸마다 묻기(+일부 칸 다시 읽기) | 'joint' = 쪽마다 두 번만 묻고 두 답이 다른 칸은 사용자 판단.
+    want: 사용자가 읽기 전에 고른 칸 이름들. 있으면 문서 종류와 상관없이 그 칸만 읽는다(없으면 AI가 정한 칸)."""
     def check():
         if stop and stop():
             raise Cancelled()
@@ -2487,10 +2422,14 @@ def process_document(paths, model, proc, ocr, deskew=False, stop=None, mode="fie
             "route": routes, "pages": len(lines_list)}
     doc_type, custom_name = resolve_ai_type(ask_doc_type(model, proc, pages, lines_list, is_docx))
     check()
-    if doc_type in (None, "cert") and "ocr" in routes:     # 중·일 문서일 수 있음: 그 글자를 더 잘 읽는 OCR로 다시
-        lines_list = reread_cjk(pages, lines_list, routes)
     if doc_type is None:
         doc_type = detect_doc_type(lines_list)
+    if want:
+        out, _ = custom_fields(model, proc, custom_name, pages, lines_list, is_docx, check, labels=want)
+        n_rev = sum(o["status"] == "review" for o in out)
+        return {**base, "doc_type": doc_type if doc_type in DOC_TYPE_LABEL else "custom",
+                "doc_name": DOC_TYPE_LABEL.get(doc_type) or custom_name or "고른 칸", "new_type": False, "fields": out,
+                "summary": {"auto": len(out) - n_rev, "review": n_rev}}
     if doc_type == "custom":
         out, new = custom_fields(model, proc, custom_name, pages, lines_list, is_docx, check)
         n_rev = sum(o["status"] == "review" for o in out)
@@ -2525,10 +2464,13 @@ def process_document(paths, model, proc, ocr, deskew=False, stop=None, mode="fie
         else:
             row = {"ans": ask(model, proc, pages[pi], with_ocr(q, lines_list[pi]), max_new=64)[0], "norm_c": False}
             # 이름은 다시 읽지 않는다: 페이지 대조에서 걸리면 바로 사용자 판별(2026-10-26 결정)
-            if key in ZOOM_NUMBER and clean(kind, row["ans"]) not in ("", "없음"):
-                row["ans2"] = zoom_number(model, proc, pages[pi], lines_list[pi], key, clean(kind, row["ans"]))
-            elif key in SECOND_READ_ANY:
-                row["ans2"] = ask(model, proc, pages[pi], q, max_new=64)[0]
+            try:
+                if key in ZOOM_NUMBER and clean(kind, row["ans"]) not in ("", "없음"):
+                    row["ans2"] = zoom_number(model, proc, pages[pi], lines_list[pi], key, clean(kind, row["ans"]))
+                elif key in SECOND_READ_ANY:
+                    row["ans2"] = ask(model, proc, pages[pi], q, max_new=64)[0]
+            except Exception:   # 두 번째 판독 실패: 그 칸은 사용자 확인
+                row["second_failed"] = True
         answers[("doc", key)] = row
         fields[key] = {"value": "", "kind": kind, "page": pi + 1, "region": None, "b_skip": False}
     gt = {"doc": {"doc_type": doc_type, "pages": names, "fields": fields}}
@@ -2539,23 +2481,21 @@ def process_document(paths, model, proc, ocr, deskew=False, stop=None, mode="fie
         lines = lines_list[f["page"] - 1]
         occ = [i for i, _ in occurrences(f["kind"], c["value"], lines) if i >= 0] if c["value"] and not is_docx else []
         box = [round(lines[occ[0]][k]) for k in ("x0", "y0", "x1", "y1")] if occ else None
-        review = c["pol"] or garbled(answers[("doc", key)]["ans"])
+        failed = answers[("doc", key)].get("second_failed")
+        review = c["pol"] or garbled(answers[("doc", key)]["ans"]) or failed
         ans2 = answers[("doc", key)].get("ans2")
         # 두 번째 판독이 다른 칸 값(이름 자리에 주소 등)을 답하면 후보 버튼에 넣지 않는다
         second = clean(f["kind"], ans2) if ans2 else ""
         cands = list(dict.fromkeys(v for v in (c["value"], second if format_ok(f["kind"], second) else "", c.get("suggest") or "") if v)) if review else []
         out.append({"key": key, "label": FIELD_LABEL.get(key, key), "kind": f["kind"], "value": c["value"],
-                    "status": "review" if review else "auto", "reason": c["reason"] if review else "",
+                    "status": "review" if review else "auto",
+                    "reason": (c["reason"] or ("두 번째 판독 실패 — 확인하세요" if failed else "")) if review else "",
                     "candidates": cands, "page": f["page"], "line_box": box,
                     # 확인 화면에 보여 줄 비교 값 하나(2026-10-28 결정): 읽은 값과 다른 첫 후보
                     "compare": next((x for x in cands if x != c["value"]), "")})
     if "cert_lang" in DOC_FIELDS[doc_type]:
         lang = lang_field(lines_list)
         out.append(lang)
-        if lang["value"] in (LANG_LABEL["ja"], LANG_LABEL["zh"]):     # 중·일 문서는 처음 읽은 값을 사용자가 확인(2026-10-28 결정)
-            note = f"{lang['value']} 문서 — 처음 읽은 값을 확인하세요"
-            out = [{**o, "status": "review", "reason": (o["reason"] + " / " if o["reason"] else "") + note,
-                    "candidates": o["candidates"] or [o["value"]]} for o in out]
     n_rev = sum(o["status"] == "review" for o in out)
     return {**base, "doc_type": doc_type, "doc_name": DOC_TYPE_LABEL[doc_type], "new_type": False, "fields": out,
             "summary": {"auto": len(out) - n_rev, "review": n_rev}}
