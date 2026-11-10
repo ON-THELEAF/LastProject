@@ -108,8 +108,9 @@ class HomePage(QScrollArea):
         sub.setAlignment(Qt.AlignCenter)
         col.addWidget(sub)
         col.addSpacing(10)
-        col.addWidget(DropZone(drop, "문서를 여기에 끌어다 놓으세요",
-                               "이미지·PDF·워드는 문서 읽기로, CSV·TXT·XLSX는 문서 만들기로 자동 연결해요."))
+        col.addWidget(DropZone(drop, "파일을 여기에 끌어다 놓으세요",
+                               "이미지·PDF·워드는 문서 읽기로, CSV·TXT·XLSX는 문서 만들기로 자동 연결해요.\n"
+                               "두 종류를 섞어 넣으면 '파일을 다시 골라 주세요' 안내 창이 떠요"))
         col.addSpacing(26)
         col.addWidget(theme.label("작업 선택", "eyebrow"), 0, Qt.AlignHCenter)
         q = QLabel("무엇을 도와드릴까요?")

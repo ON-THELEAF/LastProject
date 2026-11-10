@@ -4,6 +4,7 @@
   objectName  card(흰 카드) · pageTitle · pageSub · sectionTitle · muted · eyebrow · nav(위쪽 메뉴 버튼)
   property    variant = "primary"(파란 버튼) | "ghost"(테두리 버튼) | "green" ; badge = "ok" | "warn" | "fail" | "info"
 """
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -31,6 +32,9 @@ QPushButton#nav:checked {{ color: {BLUE_DARK}; background: {BLUE_SOFT}; border-b
 #taskCard:hover {{ background: {BLUE_SOFT}; border-color: {BLUE}; }}
 #drop:hover {{ background: {BLUE_SOFT}; border-color: {BLUE}; }}
 #banner {{ background: #EEF3FD; border: 1px solid #DCE6FA; border-radius: 14px; }}
+#notice {{ background: {FAIL_SOFT}; border: 1px solid #F5C2C2; border-radius: 10px; color: {FAIL}; }}
+#noticeInfo {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 10px; color: {MUTED}; }}
+#darkBar {{ background: {INK}; border-radius: 10px; color: white; }}
 #drop {{ background: {CARD}; border: 1.5px dashed #B9C6E4; border-radius: 14px; }}
 #drop[hover="true"] {{ background: {BLUE_SOFT}; border-color: {BLUE}; }}
 #guide {{ background: #F1F5FD; border-radius: 10px; }}
@@ -58,7 +62,9 @@ QPushButton:hover {{ border-color: {BLUE}; color: {BLUE_DARK}; }}
 QPushButton:disabled {{ color: #A9B1C0; border-color: {LINE}; }}
 QPushButton[variant="primary"] {{ background: {BLUE}; color: white; border: none; padding: 10px 20px; }}
 QPushButton[variant="primary"]:hover {{ background: {BLUE_DARK}; color: white; }}
-QPushButton[variant="link"] {{ background: transparent; border: none; color: {BLUE_DARK}; padding: 4px 0; font-weight: 700; }}
+QPushButton[variant="danger"] {{ background: {FAIL}; color: white; border: none; padding: 10px 20px; }}
+QPushButton[variant="danger"]:hover {{ background: #B93838; color: white; }}
+QPushButton[variant="link"]{{ background: transparent; border: none; color: {BLUE_DARK}; padding: 4px 0; font-weight: 700; }}
 QPushButton[variant="linkGreen"] {{ background: transparent; border: none; color: {GREEN}; padding: 4px 0; font-weight: 700; }}
 QPushButton[seg="true"] {{ background: transparent; border: none; border-radius: 7px; padding: 6px 12px; color: {MUTED}; font-weight: 700; }}
 QPushButton[seg="true"]:checked {{ background: {CARD}; color: {BLUE_DARK}; }}
@@ -126,18 +132,15 @@ def card(name: str = "card") -> tuple[QFrame, QVBoxLayout]:
     return f, lay
 
 
-def page_head(crumb: str, title: str, sub: str, right: QWidget | None = None):
-    """페이지 위쪽: 경로(홈 / …), 큰 제목, 설명, 오른쪽 버튼."""
+def page_head(title: str, sub: str, *right: QWidget):
+    """페이지 위쪽 한 줄: 큰 제목 — 설명, 오른쪽 버튼들."""
     from PySide6.QtWidgets import QHBoxLayout
     row = QHBoxLayout()
-    col = QVBoxLayout()
-    col.setSpacing(4)
-    col.addWidget(label(f"홈  /  {crumb}", "crumb"))
-    col.addWidget(label(title, "pageTitle"))
-    col.addWidget(label(sub, "pageSub"))
-    row.addLayout(col, 1)
-    if right:
-        row.addWidget(right)
+    row.addWidget(label(title, "pageTitle"))
+    row.addWidget(label(f"—  {sub}", "pageSub"), 0, Qt.AlignBottom)
+    row.addStretch(1)
+    for w in right:
+        row.addWidget(w)
     return row
 
 

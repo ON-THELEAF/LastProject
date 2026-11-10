@@ -9,14 +9,15 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout,
-                               QInputDialog, QLabel, QListWidget, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
-                               QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QListWidget, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
 import theme
 from home import DropZone
 
-COLS = ["칸", "값", "상태", "비교 값", "사유"]
+COLS = ["칸", "원본 값", "상태", "비교 값", "사유"]
+COMPARE = 3     # 사용자가 고치는 열(비교 값). 원본 값은 그대로 둔다
 DEFAULT_OUT = Path.home() / "Documents" / "BridgeDocs 읽기 결과"
 RED, YELLOW = QColor(220, 30, 30), QColor(255, 190, 0)
 
@@ -60,13 +61,15 @@ class ReadTab(QWidget):
         self.svc, self.files, self.docs, self.jobs = svc, [], [], []
         self.out_dir = svc.default_out_dir() if hasattr(svc, "default_out_dir") else DEFAULT_OUT   # 설치할 때 정한 저장 폴더
         self.labels = svc.labels()
-        self.want: list[str] = []      # 사용자가 고른 칸 이름(비면 AI가 정함)
         self.group = True              # 쪽 번호 이미지를 한 문서로 묶을지
         self.broken: set[int] = set()  # 쪽 이미지를 못 불러온 문서 번호
+        self.failures: list[str] = []  # 이번 읽기에서 실패한 파일: 사유
+        self.pending: dict[tuple[int, int], str] = {}   # (문서, 칸) → 사용자가 적은 비교 값(아직 적용 전)
         self._shown = -1               # 지금 보이는 문서(다른 문서로 갈 때 자동 저장)
+        self._last = ""                # 마지막 안내 문구
 
-        self.status = theme.label("읽을 파일을 넣고 [읽기 시작]을 누르세요", "sectionTitle")
-        self.out_label = theme.label(f"결과(JSON) 저장 폴더: {self.out_dir}", "muted")
+        self.status = theme.label("여러 파일을 문서 목록에 모은 뒤 [읽기 시작]을 누르세요", "sectionTitle")
+        self.status.setStyleSheet(f"color: {theme.BLUE_DARK};")
         self.doc_list = QListWidget()
         self.doc_list.currentRowChanged.connect(self._show_doc)
         self.page = FitImage()
@@ -86,28 +89,12 @@ class ReadTab(QWidget):
             self.kinds[k].setCheckable(True)
             self.kinds[k].setProperty("seg", True)
         self.kinds["xlsx"].setChecked(True)
-        self.message = QPlainTextEdit(readOnly=True)
-        self.message.setMaximumHeight(70)
-        self.message.setPlaceholderText("진행 상황과 안내가 여기에 나와요")
 
-        self.sep = QComboBox()       # TXT 구분 기호
-        self.sep.setAccessibleName("TXT 구분 기호")
-        for name in ("탭", "쉼표", "세미콜론", "세로줄"):
-            self.sep.addItem(f"TXT: {name}", {"탭": "\t", "쉼표": ",", "세미콜론": ";", "세로줄": "|"}[name])
-        b = {n: theme.button(n) for n in ("저장 폴더", "취소", "이 칸 확정", "비교 값으로", "되돌리기", "JSON 위치",
-                                          "읽을 칸 고르기", "목록 숨기기", "새 종류로 확정", "문서 종류 관리")}
-        b["읽을 칸 고르기"].clicked.connect(self._pick_fields)
+        b = {n: theme.button(n) for n in ("비교 값 적용", "되돌리기", "JSON 위치", "«")}
         b["되돌리기"].clicked.connect(lambda: self.undo(self.table.currentRow()))
-        b["새 종류로 확정"].clicked.connect(self._save_type)
-        b["문서 종류 관리"].clicked.connect(self._manage_types)
-        self.toggle_list = b["목록 숨기기"]
-        b.update({n: theme.button(n, "primary") for n in ("+  파일 추가", "읽기 시작", "한 번에 확정", "↓  내보내기")})
-        b["+  파일 추가"].clicked.connect(self._pick_files)
-        b["저장 폴더"].clicked.connect(self._pick_out)
+        b.update({n: theme.button(n, "primary") for n in ("읽기 시작", "한 번에 확정", "↓  내보내기")})
         b["읽기 시작"].clicked.connect(self.start)
-        b["취소"].clicked.connect(self.cancel)
-        b["이 칸 확정"].clicked.connect(lambda: self.confirm(self.table.currentRow()))
-        b["비교 값으로"].clicked.connect(lambda: self.confirm(self.table.currentRow(), use_compare=True))
+        b["비교 값 적용"].clicked.connect(lambda: self.confirm(self.table.currentRow()))
         b["한 번에 확정"].clicked.connect(self.confirm_all)
         b["↓  내보내기"].clicked.connect(self._export_dialog)
         b["JSON 위치"].clicked.connect(lambda: self._say("JSON은 문서를 읽을 때 저장돼요: " +
@@ -115,53 +102,62 @@ class ReadTab(QWidget):
 
         # 진행 상황 띠
         banner, bl = theme.card("banner")
+        bl.setContentsMargins(16, 10, 12, 10)
         brow = QHBoxLayout()
-        icon = theme.label("✓", "iconBox")
-        icon.setFixedSize(42, 42)
-        icon.setAlignment(Qt.AlignCenter)
-        brow.addWidget(icon)
-        bcol = QVBoxLayout()
-        bcol.setSpacing(2)
-        bcol.addWidget(self.status)
-        bcol.addWidget(self.out_label)
-        brow.addLayout(bcol, 1)
-        for n in ("읽을 칸 고르기", "문서 종류 관리", "저장 폴더", "취소", "읽기 시작"):
-            brow.addWidget(b[n])
+        brow.addWidget(self.status)
+        brow.addWidget(theme.label("파일을 한 번에 처리해 더 빠르고 안정적이에요.", "muted"), 1)
+        brow.addWidget(b["읽기 시작"])
         bl.addLayout(brow)
-        bl.addWidget(self.message)
+
+        # 안내 띠(읽기 결과·오류 등). 평소엔 숨김
+        self.notice = QFrame()
+        self.notice.setObjectName("noticeInfo")
+        nl = QHBoxLayout(self.notice)
+        nl.setContentsMargins(14, 8, 14, 8)
+        self.notice_text = QLabel()
+        self.notice_text.setWordWrap(True)
+        self.notice_text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        nl.addWidget(self.notice_text, 1)
+        self.fail_link = theme.button("오류 문서 확인하기 →", "link")
+        self.fail_link.setStyleSheet(f"color: {theme.FAIL};")
+        self.fail_link.clicked.connect(self._show_failures)
+        nl.addWidget(self.fail_link)
+        self.notice.hide()
 
         # 세 칸: 문서 목록 · 쪽 이미지 · 읽은 값
         lcard, ll = theme.card()
-        ll.addWidget(theme.label("문서 목록", "sectionTitle"))
-        ll.addWidget(theme.label("읽은 문서를 누르면 확인할 수 있어요", "muted"))
+        lhead = QHBoxLayout()
+        lcol = QVBoxLayout()
+        lcol.setSpacing(2)
+        lcol.addWidget(theme.label("문서 목록", "sectionTitle"))
+        lcol.addWidget(theme.label("여러 파일을 올린 뒤 한 번에 읽어요", "muted"))
+        lhead.addLayout(lcol, 1)
+        b["«"].setToolTip("목록 숨기기")
+        b["«"].setFixedWidth(40)
+        lhead.addWidget(b["«"], 0, Qt.AlignTop)
+        ll.addLayout(lhead)
         ll.addWidget(self.doc_list, 1)
         ll.addWidget(DropZone(self.add_files, "파일을 추가로 놓아주세요", "PDF · PNG · JPG · DOCX", button_text=""))
         mcard, ml = theme.card()
         ml.addWidget(self.doc_title)
         ml.addWidget(self.page, 1)
         rcard, rl = theme.card()
-        head = QHBoxLayout()
-        hc = QVBoxLayout()
-        hc.setSpacing(2)
-        hc.addWidget(theme.label("인식된 정보", "sectionTitle"))
-        hc.addWidget(theme.label("값 칸을 두 번 눌러 고칠 수 있어요 · 칸을 누르면 문서에 위치가 보여요", "muted", wrap=True))
-        head.addLayout(hc, 1)
-        rl.addLayout(head)
+        rl.addWidget(theme.label("인식된 정보", "sectionTitle"))
+        rl.addWidget(theme.label("원본 값은 그대로 두고 비교 값만 수정해 판독 정확도를 높여요.", "muted", wrap=True))
         rl.addWidget(self.table, 1)
         row = QHBoxLayout()
-        for n in ("이 칸 확정", "비교 값으로", "되돌리기", "한 번에 확정"):
-            row.addWidget(b[n], 1)
+        row.addStretch(1)
+        for n in ("비교 값 적용", "되돌리기", "한 번에 확정"):
+            row.addWidget(b[n])
         rl.addLayout(row)
-        self.type_row = QWidget()      # 처음 보는 문서 종류일 때만 보임
-        tr = QHBoxLayout(self.type_row)
-        tr.setContentsMargins(0, 0, 0, 0)
-        tr.addWidget(theme.label("처음 보는 문서 종류예요. 칸 이름을 확정하면 다음부터 그 칸들로 읽어요.", "muted", wrap=True), 1)
-        tr.addWidget(b["새 종류로 확정"])
-        self.type_row.hide()
-        rl.addWidget(self.type_row)
-        ml.insertWidget(0, b["목록 숨기기"], 0, Qt.AlignLeft)
         self.lcard = lcard
-        b["목록 숨기기"].clicked.connect(self._toggle_list)
+        self.show_list = theme.button("»")      # 목록을 숨겼을 때 가운데 칸에서 다시 열기
+        self.show_list.setToolTip("목록 보이기")
+        self.show_list.setFixedWidth(40)
+        self.show_list.hide()
+        self.show_list.clicked.connect(self._toggle_list)
+        ml.insertWidget(0, self.show_list, 0, Qt.AlignLeft)
+        b["«"].clicked.connect(self._toggle_list)
         split = QSplitter()
         split.setHandleWidth(14)
         for w in (lcard, mcard, rcard):
@@ -188,7 +184,6 @@ class ReadTab(QWidget):
         for c in self.kinds.values():
             sl.addWidget(c)
         erow.addWidget(seg)
-        erow.addWidget(self.sep)
         erow.addWidget(b["JSON 위치"])
         erow.addWidget(b["↓  내보내기"])
         el.addLayout(erow)
@@ -196,8 +191,9 @@ class ReadTab(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 18)
         lay.setSpacing(14)
-        lay.addLayout(theme.page_head("문서 읽기", "문서 읽기", "읽은 값을 확인하고 필요한 부분을 고쳐 주세요.", b["+  파일 추가"]))
+        lay.addLayout(theme.page_head("문서 읽기", "읽은 값을 확인하고 필요한 부분을 고쳐 주세요."))
         lay.addWidget(banner)
+        lay.addWidget(self.notice)
         lay.addWidget(split, 1)
         lay.addWidget(ecard)
 
@@ -222,22 +218,16 @@ class ReadTab(QWidget):
         self._say(f"문서 {n}건을 읽을게요. 맞으면 [읽기 시작]을 누르세요.\n" + "\n".join(lines))
         return g
 
-    def _pick_fields(self) -> None:
-        text, ok = QInputDialog.getMultiLineText(self, "읽을 칸 고르기",
-                                                 "읽을 칸 이름을 한 줄에 하나씩 적으세요.\n비워 두면 AI가 문서에 맞는 칸을 정해요.",
-                                                 "\n".join(self.want))
-        if ok:
-            self.want = [x.strip() for x in text.splitlines() if x.strip()]
-            self._say("이 칸들만 읽어요: " + ", ".join(self.want) if self.want else "AI가 칸을 정해서 읽어요")
-
     def start(self) -> None:
         if not self.files:
             return self._say("파일을 먼저 넣으세요")
         try:
-            job = self.svc.start_read(self.files, self.out_dir, want=self.want, group=self.group)
+            job = self.svc.start_read(self.files, self.out_dir, group=self.group)
         except ValueError as err:
             return self._say(str(err))
         self.files = []
+        self.failures = []
+        self._new_before = sum(bool(d.get("new_type")) for d in self.docs)
         self.jobs.append(job)
         job.progress.connect(self.on_progress)
         job.queued.connect(self.on_queued)
@@ -247,28 +237,6 @@ class ReadTab(QWidget):
         job.finished.connect(lambda *_, j=job: self.jobs.remove(j) if j in self.jobs else None)
         if job.queue_position:
             self.on_queued(job.queue_position)
-
-    def cancel(self) -> None:
-        """지금 읽는 문서는 바로 멈춘다. 대기 중인 작업이 있으면 그것까지 취소할지 묻는다."""
-        if not self.jobs:
-            return self._say("읽는 중인 작업이 없어요")
-        waiting = [j for j in self.jobs if j.queue_position > 0]
-        targets = list(self.jobs)
-        if waiting:
-            box = QMessageBox(self)
-            box.setWindowTitle("취소")
-            box.setText(f"대기 중인 작업이 {len(waiting)}개 있어요. 무엇을 취소할까요?")
-            now = box.addButton("지금 읽는 것만", QMessageBox.AcceptRole)
-            every = box.addButton("대기 중인 것까지 모두", QMessageBox.DestructiveRole)
-            box.addButton("그만두기", QMessageBox.RejectRole)
-            box.exec()
-            if box.clickedButton() is now:
-                targets = [j for j in self.jobs if j not in waiting]
-            elif box.clickedButton() is not every:
-                return
-        for j in targets:
-            j.cancel()
-        self.status.setText("취소했어요" + (" — 대기 중인 작업은 계속해요" if len(targets) < len(self.jobs) else ""))
 
     @Slot(str)
     def on_progress(self, text):
@@ -289,11 +257,17 @@ class ReadTab(QWidget):
 
     @Slot(str, str)
     def on_failed(self, name, reason):
-        self.message.appendPlainText(f"실패 — {name}: {reason}")
+        self.failures.append(f"{name}: {reason}")
 
     @Slot(int, int)
     def on_finished(self, ok, bad):
-        self.status.setText(f"끝났어요: 성공 {ok}건, 실패 {bad}건")
+        new = sum(bool(d.get("new_type")) for d in self.docs) - getattr(self, "_new_before", 0)
+        self.status.setText("여러 파일을 문서 목록에 모은 뒤 [읽기 시작]을 누르세요")
+        self._notice(f"<b>ⓘ  모든 문서의 읽기가 끝났어요</b>&nbsp;&nbsp; 성공 {ok - new}개 · 새 문서 인식 {new}개 · 오류 {bad}개",
+                     error=bool(bad))
+
+    def _show_failures(self) -> None:
+        QMessageBox.information(self, "오류 문서", "읽지 못한 문서예요.\n\n" + "\n".join(self.failures))
 
     # ── 확인 ──
     def current(self) -> int:
@@ -317,24 +291,25 @@ class ReadTab(QWidget):
         left = self.svc.review_left([doc])
         self.doc_title.setText(f"선택한 문서: {self._name(doc)} · {self._kind(doc)} · "
                                + (f"확인할 칸 {left}개" if left else "확인 필요 항목 없음"))
-        self.type_row.setVisible(bool(doc.get("new_type")))
         row = self.table.currentRow()
         self.table.blockSignals(True)
         self.table.setRowCount(len(doc["fields"]))
         for r, f in enumerate(doc["fields"]):
             cells = [f["label"], str(f["value"] or ""), self.labels["status"].get(f["status"], f["status"]),
-                     str(f.get("compare") or ""), f.get("reason") or ""]
+                     self.pending.get((i, r), str(f.get("compare") or "")), f.get("reason") or "—"]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
-                if c != 1:
+                if c != COMPARE:
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 if f["status"] == "review":
                     item.setBackground(QColor(theme.WARN_SOFT))
+                if c == 2:
+                    item.setForeground(QColor(theme.WARN if f["status"] == "review" else theme.GREEN))
                 self.table.setItem(r, c, item)
         self.table.blockSignals(False)
         self.table.resizeColumnsToContents()
         if 0 <= row < len(doc["fields"]):
-            self.table.setCurrentCell(row, 1)
+            self.table.setCurrentCell(row, COMPARE)
         self.mark(row if 0 <= row < len(doc["fields"]) else -1)
         if error := doc.get("error"):
             self._say(error)
@@ -396,7 +371,7 @@ class ReadTab(QWidget):
         nxt = next((k for k in list(range(r + 1, len(fields))) + list(range(0, r + 1)) if fields[k]["status"] == "review"), None)
         if nxt is not None:
             self._show_doc(i)
-            return self.table.setCurrentCell(nxt, 1)
+            return self.table.setCurrentCell(nxt, COMPARE)
         order = list(range(i + 1, len(self.docs))) + list(range(0, i))
         j = next((k for k in order if k not in self.broken and self.svc.review_left([self.docs[k]])), None)
         if j is None:
@@ -405,17 +380,23 @@ class ReadTab(QWidget):
             return self._say("모든 확인 필요 칸을 처리했어요")
         self.doc_list.setCurrentRow(j)
         first = next(k for k, f in enumerate(self.docs[j]["fields"]) if f["status"] == "review")
-        self.table.setCurrentCell(first, 1)
+        self.table.setCurrentCell(first, COMPARE)
 
-    def confirm(self, r: int, use_compare: bool = False) -> None:
-        """[이 칸 확정] = 사용자 확인. [비교 값으로] = 값을 비교 값으로 바꾸므로 사용자 수정(처음 읽은 값은 남음)."""
+    def confirm(self, r: int) -> None:
+        """[비교 값 적용]: 비교 값 칸(사용자가 고친 값, 없으면 두 번째 판독 값)을 값으로 쓴다.
+        원본 값과 같으면 사용자 확인, 다르면 사용자 수정(처음 읽은 값은 남음)."""
         i = self.current()
         if i < 0 or r < 0:
             return self._say("칸을 고르세요")
         f = self.docs[i]["fields"][r]
-        if use_compare and not f.get("compare"):
-            return self._say("비교 값이 없는 칸이에요")
-        self._set_field(r, f["compare"] if use_compare else f["value"], "edited" if use_compare else "confirmed", advance=True)
+        text = self.pending.get((i, r), str(f.get("compare") or "")).strip()
+        if not text:
+            return self._say(f"{f['label']}: 비교 값 칸에 값을 적어 주세요")
+        value, err = self.svc.parse_value(f["kind"], text)
+        if err:
+            return self._say(f"{f['label']}: {err}")
+        self.pending.pop((i, r), None)
+        self._set_field(r, value, "confirmed" if value == f["value"] else "edited", advance=True)
 
     def undo(self, r: int) -> None:
         i = self.current()
@@ -432,14 +413,9 @@ class ReadTab(QWidget):
         self._say(f"{f['label']}: 고치기 전 값으로 되돌렸어요")
 
     def _edited(self, item: QTableWidgetItem) -> None:
-        if item.column() != 1:
-            return
-        f = self.docs[self.current()]["fields"][item.row()]
-        value, err = self.svc.parse_value(f["kind"], item.text())
-        if err:
-            self._say(f"{f['label']}: {err}")
-            return self._show_doc(self.current())
-        self._set_field(item.row(), value, "edited")
+        """비교 값 칸을 고치면 적어 두기만 한다([비교 값 적용]을 눌러야 반영)."""
+        if item.column() == COMPARE:
+            self.pending[(self.current(), item.row())] = item.text()
 
     def confirm_all(self) -> None:
         """현재 문서의 확인 필요 칸만 보이는 값 그대로 확정."""
@@ -449,61 +425,11 @@ class ReadTab(QWidget):
             self.doc_list.item(i).setText(self._doc_title(self.docs[i]))
             self._next_review(i, -1)
 
-    # ── 새 문서 종류 ──
-    def _save_type(self) -> None:
-        i = self.current()
-        if i < 0 or not self.docs[i].get("new_type"):
-            return
-        doc = self.docs[i]
-        name, ok = QInputDialog.getText(self, "새 문서 종류 확정", "문서 종류 이름:", text=doc.get("doc_name") or "")
-        if not ok:
-            return
-        text, ok = QInputDialog.getMultiLineText(self, "새 문서 종류 확정", "읽을 칸 이름(한 줄에 하나, 고치거나 지워도 돼요):",
-                                                 "\n".join(f["label"] for f in doc["fields"]))
-        if not ok:
-            return
-        try:
-            self.svc.save_custom_type(name, text.splitlines())
-        except ValueError as err:
-            return self._say(str(err))
-        self.docs[i] = {**doc, "new_type": False, "doc_name": name.strip()}
-        self.doc_list.item(i).setText(self._doc_title(self.docs[i]))
-        self._show_doc(i)
-        self._say(f"'{name.strip()}' 종류를 저장했어요. 다음부터 이 칸들로 읽어요.")
-
-    def _manage_types(self) -> None:
-        """확정해 둔 새 문서 종류의 칸 목록을 고치거나 지운다."""
-        types = self.svc.custom_types()
-        if not types:
-            return self._say("확정해 둔 새 문서 종류가 없어요")
-        name, ok = QInputDialog.getItem(self, "문서 종류 관리", "고치거나 지울 문서 종류:", list(types), 0, False)
-        if not ok:
-            return
-        box = QMessageBox(self)
-        box.setWindowTitle("문서 종류 관리")
-        box.setText(f"'{name}' 칸: " + ", ".join(types[name]))
-        fix = box.addButton("칸 고치기", QMessageBox.AcceptRole)
-        rm = box.addButton("지우기", QMessageBox.DestructiveRole)
-        box.addButton("그만두기", QMessageBox.RejectRole)
-        box.exec()
-        try:
-            if box.clickedButton() is fix:
-                text, ok = QInputDialog.getMultiLineText(self, "칸 고치기", "칸 이름(한 줄에 하나):", "\n".join(types[name]))
-                if ok:
-                    self.svc.save_custom_type(name, text.splitlines())
-                    self._say(f"'{name}' 칸을 고쳤어요")
-            elif box.clickedButton() is rm:
-                if QMessageBox.question(self, "지우기", f"'{name}' 종류를 지울까요? 다음부터는 처음 보는 종류로 읽어요.") == QMessageBox.Yes:
-                    self.svc.delete_custom_type(name)
-                    self._say(f"'{name}' 종류를 지웠어요")
-        except ValueError as err:
-            self._say(str(err))
-
     # ── 내보내기 ──
     def export_to(self, path_stem: Path, append: bool = False, force: bool = False, only: list[str] | None = None) -> list[Path] | None:
         kinds = [k for k, c in self.kinds.items() if c.isChecked()]
         try:
-            out = self.svc.export(self.docs, kinds, Path(path_stem), append=append, sep=self.sep.currentData(), force=force, only=only)
+            out = self.svc.export(self.docs, kinds, Path(path_stem), append=append, force=force, only=only)
         except ValueError as err:
             return self._say(str(err))
         self._say("저장했어요:\n" + "\n".join(map(str, out)))
@@ -565,24 +491,12 @@ class ReadTab(QWidget):
                 p, _ = QFileDialog.getOpenFileName(self, "이어 붙일 파일", str(self.out_dir), "내보낸 파일 (*.xlsx *.csv *.txt)")
                 if not p or self.export_to(Path(p), append=True, force=force, only=only) is not None:
                     return
-                QMessageBox.warning(self, "이어 붙일 수 없어요", self.message.toPlainText() + "\n\n다른 파일을 고르세요.")
+                QMessageBox.warning(self, "이어 붙일 수 없어요", self._last + "\n\n다른 파일을 고르세요.")
 
     # ── 기타 ──
     def _toggle_list(self) -> None:
         self.lcard.setVisible(not self.lcard.isVisible())
-        self.toggle_list.setText("목록 숨기기" if self.lcard.isVisible() else "목록 보이기")
-
-    def _pick_files(self) -> None:
-        exts = " ".join("*" + s for s in self.svc.supported_suffixes())
-        ps, _ = QFileDialog.getOpenFileNames(self, "읽을 문서", "", f"문서 ({exts})")
-        if ps:
-            self.add_files([Path(p) for p in ps])
-
-    def _pick_out(self) -> None:
-        p = QFileDialog.getExistingDirectory(self, "결과(JSON) 저장 폴더", str(self.out_dir))
-        if p:
-            self.out_dir = Path(p)
-            self.out_label.setText(f"결과(JSON) 저장 폴더: {p}")
+        self.show_list.setVisible(not self.lcard.isVisible())
 
     def _name(self, doc: dict) -> str:
         return ", ".join(doc.get("source") or []) or "문서"
@@ -593,7 +507,18 @@ class ReadTab(QWidget):
     def _doc_title(self, doc: dict) -> str:
         left = self.svc.review_left([doc])
         bad = any(self.docs[k] is doc for k in self.broken if k < len(self.docs))
-        return f"{'✕ ' if bad else '⚠ ' if left else '✓ '}{self._name(doc)} ({self._kind(doc)})"
+        mark = "✕" if bad else "!" if left else "N" if doc.get("new_type") else "✓"
+        tag = "  ·  새 문서" if doc.get("new_type") else "  ·  확인 필요" if left else ""
+        return f"{mark}   {self._name(doc)}\n      {self._kind(doc)}{tag}"
+
+    def _notice(self, html: str, error: bool = False) -> None:
+        """위쪽 안내 띠. error면 빨간 띠와 [오류 문서 확인하기]."""
+        self.notice.setObjectName("notice" if error else "noticeInfo")
+        theme.repolish(self.notice)
+        self.notice_text.setText(html)
+        self.fail_link.setVisible(error and bool(self.failures))
+        self.notice.show()
 
     def _say(self, text: str) -> None:
-        self.message.setPlainText(text)
+        self._last = text
+        self._notice(text.replace("\n", "<br>"))

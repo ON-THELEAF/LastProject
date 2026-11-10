@@ -1,6 +1,6 @@
 """BridgeDocs 프로그램 창. 실행: python frontend/app.py
 
-위쪽 메뉴: 홈(home.py) · 문서 읽기(read_tab.py) · 문서 만들기(make_tab.py). 모양은 theme.py.
+위쪽 메뉴: 홈(home.py) · 문서 읽기(read_tab.py) · 문서 만들기(make_tab.py) · 문서 관리(docs_tab.py). 모양은 theme.py.
 """
 import sys
 from pathlib import Path
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, 
 
 import theme  # noqa: E402
 from desktop.service import DesktopService  # noqa: E402
+from docs_tab import DocsTab  # noqa: E402
 from home import HomePage  # noqa: E402
 from make_tab import MakeTab  # noqa: E402
 from read_tab import ReadTab  # noqa: E402
@@ -28,10 +29,11 @@ class MainWindow(QMainWindow):
     def __init__(self, svc):
         super().__init__()
         self.setWindowTitle("BridgeDocs")
-        self.read, self.make = ReadTab(svc), MakeTab(svc)
+        self.read, self.make = ReadTab(svc), MakeTab(svc, open_page=self.open)
+        self.docs = DocsTab(svc, on_change=self.make.refresh_templates)
         self.home = HomePage(open_page=self.open, drop=self.route_files)
         self.stack = QStackedWidget()
-        self.pages = {"홈": self.home, "문서 읽기": self.read, "문서 만들기": self.make}
+        self.pages = {"홈": self.home, "문서 읽기": self.read, "문서 만들기": self.make, "문서 관리": self.docs}
         for w in self.pages.values():
             self.stack.addWidget(w)
 

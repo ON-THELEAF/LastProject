@@ -30,7 +30,7 @@
 
 | 폴더/파일 | 내용 |
 |---|---|
-| `frontend/` | 화면: `app.py`(창·위쪽 메뉴), `home.py`(홈), `read_tab.py`(문서 읽기), `make_tab.py`(문서 만들기), `theme.py`(모양), `INTERFACE.md`(약속) |
+| `frontend/` | 화면: `app.py`(창·위쪽 메뉴), `home.py`(홈), `read_tab.py`(문서 읽기), `make_tab.py`(문서 만들기), `docs_tab.py`(문서 관리: 워드 양식 추가·삭제·미리보기), `theme.py`(모양), `INTERFACE.md`(약속) |
 | `pipeline/desktop/` | 백엔드: `service.py`(화면이 부르는 유일한 입구), `worker.py`(작업 스레드), `export.py`(검사·내보내기), `offline.py`(인터넷 차단·모델 위치) |
 | `pipeline/bridgedocs.py` | 엔진 전체(읽기 1~3단계, 문서 만들기, 실험 도구) |
 | `docs/` | 프로그램 구조도 |

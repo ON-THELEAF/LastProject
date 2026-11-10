@@ -26,15 +26,16 @@ def _step(n: int, title: str, sub: str, content) -> QWidget:
     num = theme.label(str(n), "stepNum")
     num.setFixedSize(30, 30)
     num.setAlignment(Qt.AlignCenter)
+    top = QHBoxLayout()
+    top.addWidget(num)
+    top.addWidget(theme.label(f"{n}단계 · {title}", "sectionTitle"), 1)
     head = QVBoxLayout()
-    head.setSpacing(2)
-    head.addWidget(num)
-    head.addWidget(theme.label(f"{n}단계", "eyebrow"))
-    head.addWidget(theme.label(title, "sectionTitle"))
+    head.setSpacing(4)
+    head.addLayout(top)
     head.addWidget(theme.label(sub, "muted", wrap=True))
     head.addStretch(1)
     box = QWidget()
-    box.setFixedWidth(170)
+    box.setFixedWidth(220)
     box.setLayout(head)
     row.addWidget(box)
     row.addLayout(content, 1)
@@ -43,8 +44,9 @@ def _step(n: int, title: str, sub: str, content) -> QWidget:
 
 
 class MakeTab(QWidget):
-    def __init__(self, svc, parent=None):
+    def __init__(self, svc, open_page=lambda name: None, parent=None):
         super().__init__(parent)
+        self.open_page = open_page      # [문서 관리] → 문서 관리 화면
         self.svc, self.data_path, self.out_dir, self.docs = svc, None, None, []
 
         self.data_label = theme.label("데이터 파일을 고르세요", "sectionTitle")
@@ -68,11 +70,10 @@ class MakeTab(QWidget):
         self.message.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.made = []          # 마지막으로 만든 문서 파일들(PDF·그림 내보내기 대상)
 
-        buttons = {name: theme.button(name) for name in ("데이터 고르기", "새 양식 추가…", "양식 지우기", "저장 폴더 고르기")}
-        buttons.update({name: theme.button(name, "primary") for name in ("불러오기", "만들기")})
+        buttons = {name: theme.button(name) for name in ("문서 관리", "저장 폴더 고르기")}
+        buttons.update({name: theme.button(name, "primary") for name in ("데이터 고르기", "불러오기", "만들기")})
         buttons["데이터 고르기"].clicked.connect(self._pick_data)
-        buttons["새 양식 추가…"].clicked.connect(self._pick_template)
-        buttons["양식 지우기"].clicked.connect(self._remove_template)
+        buttons["문서 관리"].clicked.connect(lambda: self.open_page("문서 관리"))
         buttons["불러오기"].clicked.connect(self.load)
         buttons["저장 폴더 고르기"].clicked.connect(self._pick_out)
         buttons["만들기"].clicked.connect(lambda: self.make())
@@ -98,11 +99,10 @@ class MakeTab(QWidget):
                               button_text="", file_filter=DATA_FILTER))
         # 2단계 양식과 내용
         s2 = QVBoxLayout()
+        s2.addWidget(theme.label("문서 양식", "muted"))
         trow = QHBoxLayout()
-        trow.addWidget(theme.label("문서 양식", "sectionTitle"))
         trow.addWidget(self.template_box, 1)
-        trow.addWidget(buttons["새 양식 추가…"])
-        trow.addWidget(buttons["양식 지우기"])
+        trow.addWidget(buttons["문서 관리"])
         trow.addWidget(buttons["불러오기"])
         s2.addLayout(trow)
         s2.addWidget(self.hint)
@@ -113,11 +113,16 @@ class MakeTab(QWidget):
         r3.addWidget(self.out_label, 1)
         r3.addWidget(theme.label("파일 이름", "muted"))
         r3.addWidget(self.name_box)
+        r3.addWidget(theme.label("기본: 문서 → 문서1.docx,\n문서2.docx …", "muted"))
         r3.addWidget(buttons["저장 폴더 고르기"])
         r3.addWidget(buttons["만들기"])
         s3.addLayout(r3)
         r4 = QHBoxLayout()
-        r4.addWidget(theme.label("만든 문서를 다른 형식으로도 저장", "muted"), 1)
+        r4c = QVBoxLayout()
+        r4c.setSpacing(0)
+        r4c.addWidget(theme.label("만든 문서를 다른 형식으로도 저장", "sectionTitle"))
+        r4c.addWidget(theme.label("저장 전에 이름을 고칠 수 있어요", "muted"))
+        r4.addLayout(r4c, 1)
         for text, kind in (("PDF로 내보내기", "pdf"), ("이미지로 내보내기", "png")):
             b = theme.button(text)
             b.clicked.connect(lambda _=False, k=kind: self.convert(k))
@@ -140,9 +145,11 @@ class MakeTab(QWidget):
         gl.addWidget(theme.label("내가 넣은 워드 양식(.docx)의 빈칸 {{…}}에 데이터 값을 왼쪽부터 순서대로 넣어 문서를 만들어요.", "muted", wrap=True))
         for t in ("없는 값은 빈칸으로 만들어요", "표 한 줄 = 문서 하나", "첫 줄이 제목이면 체크하세요"):
             gl.addWidget(theme.label("✓  " + t))
-        tip, tl = theme.card("guide")
-        tl.addWidget(theme.label("양식 만드는 법", "sectionTitle"))
-        tl.addWidget(theme.label("워드에서 값이 들어갈 자리에 {{이름}}처럼 적어 저장한 뒤 '새 양식 추가…'로 넣으세요.", "muted", wrap=True))
+        tip, tl = theme.card("guide")      # 표 → 문서 그림
+        pic = theme.label("▦   →   ▤")
+        pic.setStyleSheet(f"font-size: 40px; color: {theme.BLUE};")
+        pic.setAlignment(Qt.AlignCenter)
+        tl.addWidget(pic)
         gl.addWidget(tip)
         gl.addStretch(1)
         guide.setFixedWidth(300)
@@ -154,7 +161,7 @@ class MakeTab(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(28, 22, 28, 18)
         lay.setSpacing(14)
-        lay.addLayout(theme.page_head("문서 만들기", "문서 만들기", "데이터를 불러와 내용을 확인하고 새 문서를 만드세요."))
+        lay.addLayout(theme.page_head("문서 만들기", "데이터를 불러와 내용을 확인하고 새 문서를 만드세요."))
         lay.addLayout(body, 1)
         self.refresh_templates()
 
@@ -176,18 +183,10 @@ class MakeTab(QWidget):
     def template(self) -> dict | None:
         return self.template_box.currentData()
 
-    def add_template(self, path: Path) -> None:
-        try:
-            t = self.svc.add_template(path)
-        except ValueError as err:
-            return self._say(str(err))
-        self.refresh_templates(t["id"])
-        self._say(f"양식을 추가했어요: {t['name']}")
-
     def _show_hint(self) -> None:
         t = self.template()
         if not t:
-            self.hint.setText("양식이 없어요. '새 양식 추가…'로 워드 양식(.docx)을 넣으세요. 양식 안에 {{칸 이름}}을 적어 두면 그 자리에 값이 들어가요.")
+            self.hint.setText("양식이 없어요. [문서 관리]에서 워드 양식(.docx)을 넣으세요. 양식 안에 {{칸 이름}}을 적어 두면 그 자리에 값이 들어가요.")
         else:
             try:
                 slots = self.svc.template_slots(t["path"])
@@ -253,7 +252,7 @@ class MakeTab(QWidget):
         if not self.data_path:
             return self._say("데이터 파일을 먼저 고르세요")
         if not t:
-            return self._say("양식을 고르세요 — '새 양식 추가…'로 워드 양식(.docx)을 넣을 수 있어요")
+            return self._say("양식을 고르세요 — [문서 관리]에서 워드 양식(.docx)을 넣을 수 있어요")
         self._say("불러오는 중…")
         QApplication.processEvents()
         try:
@@ -346,24 +345,6 @@ class MakeTab(QWidget):
         p, _ = QFileDialog.getOpenFileName(self, "데이터 고르기", "", DATA_FILTER)
         if p:
             self.set_data(Path(p))
-
-    def _pick_template(self) -> None:
-        p, _ = QFileDialog.getOpenFileName(self, "새 양식 고르기", "", "워드 양식 (*.docx)")
-        if p:
-            self.add_template(Path(p))
-
-    def _remove_template(self) -> None:
-        t = self.template()
-        if not t:
-            return
-        if QMessageBox.question(self, "양식 지우기", f"'{t['name']}' 양식을 지울까요? 양식 폴더에서 파일이 삭제돼요.") != QMessageBox.Yes:
-            return
-        try:
-            self.svc.remove_template(t["id"])
-        except ValueError as err:
-            return self._say(str(err))
-        self.refresh_templates()
-        self._say(f"양식을 지웠어요: {t['name']}")
 
     def _pick_out(self) -> None:
         p = QFileDialog.getExistingDirectory(self, "저장 폴더 고르기")
