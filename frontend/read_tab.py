@@ -6,13 +6,14 @@ shortcut: 확대·축소·쪽 넘기기 버튼은 없다(칸을 누르면 그 �
 """
 import base64
 import html
+import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
-                               QListWidget, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
+                               QLabel, QListWidget, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSizePolicy,
+                               QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 import theme
 from home import DropZone
@@ -21,6 +22,11 @@ COLS = ["칸", "원본 값", "상태", "비교 값", "사유"]
 COMPARE = 3     # 사용자가 고치는 열(비교 값). 원본 값은 그대로 둔다
 DEFAULT_OUT = Path.home() / "Documents" / "BridgeDocs 읽기 결과"
 RED, YELLOW = QColor(220, 30, 30), QColor(255, 190, 0)
+
+
+def _stem(files: list) -> str:
+    """문서 이름(쪽 번호 _p1 뺌). 엔진 작업(ReadJob._stem)과 같은 규칙이라 대기 줄과 결과를 짝짓는 데 쓴다."""
+    return re.sub(r"_p\d+$", "", Path(files[0]).stem)
 
 
 def draw_boxes(pm: QPixmap, scale: float, boxes: list[tuple[list, QColor, int]]) -> QPixmap:
@@ -71,8 +77,14 @@ class ReadTab(QWidget):
 
         self.status = theme.label("여러 파일을 문서 목록에 모은 뒤 [읽기 시작]을 누르세요", "sectionTitle")
         self.status.setStyleSheet(f"color: {theme.BLUE_DARK};")
-        self.doc_list = QListWidget()
+        self.waiting: list[dict] = []  # 넣었지만 아직 다 읽지 않은 문서(목록에서 읽은 문서 뒤에 보임)
+        self.loading = None            # 첫 문서가 끝날 때까지 띄우는 로딩 창
+        self.doc_list = QListWidget()  # 줄 = 읽은 문서(self.docs) 다음에 대기 문서(self.waiting)
         self.doc_list.currentRowChanged.connect(self._show_doc)
+        self.doc_list.setWordWrap(True)     # 문서 상자를 목록 폭에 맞춘다(옆으로 밀리지 않게)
+        self.doc_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.doc_list.setTextElideMode(Qt.ElideMiddle)
+        self.doc_list.setResizeMode(QListWidget.Adjust)
         self.page = FitImage()
         self.page.setStyleSheet(f"background: #EEF1F6; border-radius: 10px; color: {theme.MUTED};")
         self.doc_title = theme.label("왼쪽 목록에서 문서를 고르세요", "sectionTitle", wrap=True)
@@ -80,7 +92,12 @@ class ReadTab(QWidget):
         self.table.setHorizontalHeaderLabels(COLS)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setWordWrap(True)        # 표가 칸 폭 안에 다 보이게(옆으로 끌지 않게)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        head = self.table.horizontalHeader()
+        for c, mode in enumerate((QHeaderView.ResizeToContents, QHeaderView.Stretch, QHeaderView.ResizeToContents,
+                                  QHeaderView.Stretch, QHeaderView.Stretch)):
+            head.setSectionResizeMode(c, mode)
         self.table.itemChanged.connect(self._edited)
         self.table.currentCellChanged.connect(lambda r, *_: (self.mark(r), self.confirm_one.setVisible(r >= 0)))
         self._images = {}       # 문서 파일들 → [(쪽 QPixmap, 원래 폭)]
@@ -216,9 +233,9 @@ class ReadTab(QWidget):
 
     # ── 파일 넣기·읽기 ──
     def add_files(self, paths: list[Path], ask: bool = True) -> dict:
-        """묶음을 보여 주고 확인받는다(읽기 시작을 눌러야 읽음). 묶음을 거절하면 이미지를 따로따로 읽는다."""
-        self.files = [Path(p) for p in paths]
-        g = self.svc.preview_groups(self.files)
+        """넣은 파일을 바로 문서 목록에 '대기'로 보인다(읽기 시작을 눌러야 읽음). 쪽 묶음을 거절하면 이미지를 따로따로 읽는다."""
+        paths = [Path(p) for p in paths]
+        g = self.svc.preview_groups(paths)
         self.group = True
         if ask and any(len(x["files"]) > 1 for x in g["groups"]):
             listing = "\n".join(f"· {x['name']}: {', '.join(Path(f).name for f in x['files'])}" for x in g["groups"] if len(x["files"]) > 1)
@@ -232,6 +249,15 @@ class ReadTab(QWidget):
         n = len(g["groups"]) if self.group else sum(len(x["files"]) for x in g["groups"])
         lines = [f"· {x['name']}: {', '.join(Path(f).name for f in x['files'])}" for x in g["groups"]] if self.group else []
         lines += [f"✕ {Path(x['file']).name}: {x['reason']}" for x in g["rejected"]]
+        units = [x["files"] for x in g["groups"]] if self.group else [[f] for x in g["groups"] for f in x["files"]]
+        first = len(self.docs) + len(self.waiting)
+        for files in units:
+            w = {"files": [str(f) for f in files], "source": [Path(f).name for f in files], "state": "대기"}
+            self.waiting.append(w)
+            self.doc_list.addItem(self._wait_title(w))
+            self.files += [Path(f) for f in files]
+        if units and self.doc_list.currentRow() < 0:
+            self.doc_list.setCurrentRow(first)
         self._notice(f"<b>새 파일이 추가됐어요</b>&nbsp;&nbsp; {n}개 파일이 읽기 대기 중이에요 — 읽기 시작을 눌러 주세요"
                      + "".join("<br>" + html.escape(x) for x in lines))
         return g
@@ -246,6 +272,18 @@ class ReadTab(QWidget):
         self.files = []
         self.failures = []
         self._new_before = sum(bool(d.get("new_type")) for d in self.docs)
+        for k, w in enumerate(self.waiting):
+            if w["state"] == "대기":
+                self.waiting[k] = {**w, "state": "읽는 중"}
+                self.doc_list.item(len(self.docs) + k).setText(self._wait_title(self.waiting[k]))
+        # 첫 문서가 끝날 때까지 기다리게 하는 로딩 창(그 뒤로는 확인하면서 나머지를 읽는다)
+        self.loading = QProgressDialog("문서를 읽는 중이에요…\n첫 문서가 끝나면 바로 확인할 수 있어요.", None, 0, 0, self)
+        self.loading.setWindowTitle("문서 읽기")
+        self.loading.setCancelButton(None)
+        self.loading.setWindowModality(Qt.WindowModal)
+        self.loading.setMinimumDuration(0)
+        self.loading.setAutoClose(False)
+        self.loading.show()
         self.jobs.append(job)
         job.progress.connect(self.on_progress)
         job.queued.connect(self.on_queued)
@@ -258,7 +296,16 @@ class ReadTab(QWidget):
 
     @Slot(str)
     def on_progress(self, text):
-        self.status.setText(text)
+        if self.loading:
+            self.loading.setLabelText(f"{text}\n첫 문서가 끝나면 바로 확인할 수 있어요.")
+            return self.status.setText(text)
+        left = sum(w["state"] == "읽는 중" for w in self.waiting)
+        self.status.setText(f"{text}  —  다른 문서 {left}건은 아직 읽는 중이에요. 끝난 문서부터 확인하세요" if left else text)
+
+    def _close_loading(self) -> None:
+        if self.loading:
+            self.loading.close()
+            self.loading = None
 
     @Slot(int)
     def on_queued(self, n):
@@ -266,19 +313,47 @@ class ReadTab(QWidget):
 
     @Slot(dict)
     def on_done(self, doc):
+        """다 읽은 문서는 대기 줄을 빼고 읽은 문서 줄로 넣는다. 첫 문서면 로딩 창을 닫고 그 문서를 보여 준다."""
+        prev, old = self.doc_list.currentRow(), len(self.docs)
+        show_new = bool(self.loading) or prev < 0 or prev >= old    # 보던 읽은 문서가 없으면 새 문서를 보여 준다
+        self.doc_list.blockSignals(True)
+        k = self._waiting_index(_stem(doc.get("files") or doc.get("source") or ["?"]))
+        if k is not None:
+            self.waiting.pop(k)
+            self.doc_list.takeItem(len(self.docs) + k)
         self.docs.append(doc)
+        self.doc_list.insertItem(old, self._doc_title(doc))
+        if show_new:
+            self.doc_list.setCurrentRow(old)
+        self.doc_list.blockSignals(False)
+        if show_new:
+            self._show_doc(old)
         s = doc.get("summary", {})
-        self.doc_list.addItem(self._doc_title(doc))
         self._say(f"{self._name(doc)}: 자동 {s.get('auto', 0)}칸, 확인 필요 {s.get('review', 0)}칸")
-        if self.doc_list.currentRow() < 0:
-            self.doc_list.setCurrentRow(0)
+        self._close_loading()
+        left = sum(w["state"] == "읽는 중" for w in self.waiting)
+        if left:
+            self.status.setText(f"다른 문서 {left}건은 아직 읽는 중이에요. 끝난 문서부터 확인하세요")
+
+    def _waiting_index(self, stem: str) -> int | None:
+        return next((k for k, w in enumerate(self.waiting) if w["state"] == "읽는 중" and _stem(w["files"]) == stem), None)
 
     @Slot(str, str)
     def on_failed(self, name, reason):
         self.failures.append(f"{name}: {reason}")
+        k = self._waiting_index(name)
+        if k is not None:      # 목록에 ✕ 오류로 남긴다
+            self.waiting[k] = {**self.waiting[k], "state": "오류", "reason": reason}
+            self.doc_list.item(len(self.docs) + k).setText(self._wait_title(self.waiting[k]))
 
     @Slot(int, int)
     def on_finished(self, ok, bad):
+        self._close_loading()
+        for k, w in enumerate(self.waiting):     # 중간에 멈춘 작업의 남은 문서는 다시 대기로
+            if w["state"] == "읽는 중":
+                self.waiting[k] = {**w, "state": "대기"}
+                self.files += [Path(f) for f in w["files"]]
+                self.doc_list.item(len(self.docs) + k).setText(self._wait_title(self.waiting[k]))
         new = sum(bool(d.get("new_type")) for d in self.docs) - getattr(self, "_new_before", 0)
         self.status.setText("여러 파일을 문서 목록에 모은 뒤 [읽기 시작]을 누르세요")
         self._notice(f"<b>ⓘ  모든 문서의 읽기가 끝났어요</b>&nbsp;&nbsp; 성공 {ok - new}개 · 새 문서 인식 {new}개 · 오류 {bad}개",
@@ -289,7 +364,9 @@ class ReadTab(QWidget):
 
     # ── 확인 ──
     def current(self) -> int:
-        return self.doc_list.currentRow()
+        """지금 고른 읽은 문서 번호(대기 문서를 골랐으면 -1)."""
+        r = self.doc_list.currentRow()
+        return r if r < len(self.docs) else -1
 
     def _autosave(self) -> None:
         """보던 문서의 확정·수정 내용을 JSON에 저장(다른 문서로 넘어갈 때)."""
@@ -300,6 +377,8 @@ class ReadTab(QWidget):
                 self._say(str(err))
 
     def _show_doc(self, i: int) -> None:
+        if len(self.docs) <= i < len(self.docs) + len(self.waiting):
+            return self._show_waiting(self.waiting[i - len(self.docs)])
         if i < 0 or i >= len(self.docs):
             return
         if i != self._shown:
@@ -307,8 +386,7 @@ class ReadTab(QWidget):
             self._shown = i
         doc = self.docs[i]
         left = self.svc.review_left([doc])
-        self.doc_title.setText(f"선택한 문서: {self._name(doc)} · {self._kind(doc)} · "
-                               + (f"확인할 칸 {left}개" if left else "확인 필요 항목 없음"))
+        self.doc_title.setText(self._name(doc))      # 가운데 미리보기 위에는 파일 이름만
         new = bool(doc.get("new_type"))
         self.new_badge.setVisible(new)
         self.new_note.setVisible(new)
@@ -328,7 +406,7 @@ class ReadTab(QWidget):
                     item.setForeground(QColor(theme.WARN if f["status"] == "review" else theme.GREEN))
                 self.table.setItem(r, c, item)
         self.table.blockSignals(False)
-        self.table.resizeColumnsToContents()
+        self.table.resizeRowsToContents()
         if 0 <= row < len(doc["fields"]):
             self.table.setCurrentCell(row, COMPARE)
         self.mark(row if 0 <= row < len(doc["fields"]) else -1)
@@ -336,6 +414,31 @@ class ReadTab(QWidget):
             self._say(error)
         elif not left:
             self._say("이 문서는 확인 필요 항목이 없어요")
+
+    def _show_waiting(self, w: dict) -> None:
+        """아직 안 읽은 문서: 가운데에 파일 첫 쪽만 보여 준다(칸 표는 비움)."""
+        self.doc_title.setText(", ".join(w["source"]))
+        self.new_badge.hide()
+        self.new_note.hide()
+        self.table.setRowCount(0)
+        key = ("대기",) + tuple(w["files"])     # 읽은 뒤 쪽 그림(보정됨)과 섞이지 않게 따로 둔다
+        if key not in self._images:
+            try:
+                img = (self.svc.page_images({"files": w["files"]}) or [None])[0]
+                pm = QPixmap()
+                self._images[key] = pm if img and pm.loadFromData(base64.b64decode(img["src"])) else None
+            except Exception:  # 손상·지원 안 하는 파일: 미리보기만 못 보여 준다(읽기는 그대로)
+                self._images[key] = None
+        pm = self._images[key]
+        self.page.show_pixmap(pm or QPixmap())
+        if not pm:
+            self.page.setText("미리보기가 없어요 (워드 문서이거나 열 수 없는 파일)")
+        if w["state"] == "오류":
+            self._say(f"이 문서는 읽지 못했어요 — {w.get('reason', '')}")
+
+    def _wait_title(self, w: dict) -> str:
+        mark = {"대기": "·", "읽는 중": "…", "오류": "✕"}[w["state"]]
+        return f"{mark}   {', '.join(w['source'])}\n      {'읽기 대기' if w['state'] == '대기' else w['state']}"
 
     def _pages(self, i: int) -> list[tuple[QPixmap, int]]:
         doc = self.docs[i]

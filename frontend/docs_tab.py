@@ -60,10 +60,9 @@ class DocsTab(QWidget):
         # 왼쪽: 양식 목록
         lcard, ll = theme.card()
         lhead = QHBoxLayout()
-        lhead.addWidget(theme.label("문서 양식", "sectionTitle"), 1)
+        lhead.addWidget(theme.label("📁  문서 양식", "sectionTitle"), 1)
         lhead.addWidget(self.count)
         ll.addLayout(lhead)
-        ll.addWidget(theme.label("📁  BRIDGEDOCS 양식", "eyebrow"))
         ll.addWidget(self.list, 1)
         ll.addWidget(theme.label("DOCX 파일의 {{빈칸}}을 자동으로 찾아요.", "muted", wrap=True))
         lcard.setFixedWidth(280)

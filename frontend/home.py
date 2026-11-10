@@ -23,11 +23,13 @@ class DropZone(QFrame):
         lay.addWidget(icon)
         col = QVBoxLayout()
         col.setSpacing(2)
-        col.addWidget(theme.label(title, "sectionTitle"))
-        col.addWidget(theme.label(sub, "muted", wrap=True))
+        self.title = theme.label(title, "sectionTitle")
+        self.sub = theme.label(sub, "muted", wrap=True)
+        col.addWidget(self.title)
+        col.addWidget(self.sub)
         lay.addLayout(col, 1)
         if button_text:
-            b = theme.button(button_text)
+            b = theme.button(button_text, "primary")
             b.clicked.connect(self._pick)
             lay.addWidget(b)
 

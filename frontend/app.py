@@ -75,7 +75,22 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.stack, 1)
         lay.addWidget(footer)
         self.setCentralWidget(body)
+        self.setAcceptDrops(True)      # 창 어디에 놓아도 파일이 들어간다(놓는 칸이 아닌 곳도)
         self.open("홈")
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        paths = [Path(u.toLocalFile()) for u in e.mimeData().urls() if u.isLocalFile()]
+        if not paths:
+            return
+        if self.stack.currentWidget() is self.docs and all(p.suffix.lower() == ".docx" for p in paths):
+            for p in paths:      # 문서 관리 화면에 놓은 워드 파일은 양식으로 추가
+                self.docs.add(p)
+            return
+        self.route_files(paths)
 
     def open(self, name: str) -> None:
         self.stack.setCurrentWidget(self.pages[name])
@@ -105,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     svc = DesktopService()
     win = MainWindow(svc)
     win.resize(1280, 820)
-    win.show()
+    win.showMaximized()      # 문서 목록·인식된 정보가 한 화면에 다 보이게
     app.aboutToQuit.connect(svc.wait_all)     # 창을 닫으면 읽던 작업을 멈추고 기다린다
     return app.exec()
 

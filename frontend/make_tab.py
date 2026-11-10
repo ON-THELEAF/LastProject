@@ -60,7 +60,10 @@ class MakeTab(QWidget):
         self.template_box.setAccessibleName("양식")
         self.template_box.setPlaceholderText("양식을 추가하세요")
         self.hint = theme.label("", "muted", wrap=True)
-        self.out_label = theme.label("저장 폴더를 고르세요", "muted")
+        self.out_label = QLineEdit()      # 저장 폴더(길게). [저장 폴더 고르기]로 채움
+        self.out_label.setReadOnly(True)
+        self.out_label.setPlaceholderText("저장 폴더 이름")
+        self.out_label.setAccessibleName("저장 폴더")
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["문서 / 빈칸", "값", "알림"])
         self.tree.setColumnWidth(0, 220)
@@ -71,39 +74,25 @@ class MakeTab(QWidget):
         self.made = []          # 마지막으로 만든 문서 파일들(PDF·그림 내보내기 대상)
 
         buttons = {name: theme.button(name) for name in ("문서 관리", "저장 폴더 고르기")}
-        buttons.update({name: theme.button(name, "primary") for name in ("데이터 고르기", "불러오기", "만들기")})
-        buttons["데이터 고르기"].clicked.connect(self._pick_data)
+        buttons.update({name: theme.button(name, "primary") for name in ("만들기",)})
         buttons["문서 관리"].clicked.connect(lambda: self.open_page("문서 관리"))
-        buttons["불러오기"].clicked.connect(self.load)
         buttons["저장 폴더 고르기"].clicked.connect(self._pick_out)
         buttons["만들기"].clicked.connect(lambda: self.make())
         self.template_box.currentIndexChanged.connect(self._show_hint)
+        self.template_box.currentIndexChanged.connect(self._auto_load)     # [불러오기] 없이 양식을 고르면 바로 불러온다
 
         # 1단계 데이터
-        s1 = QVBoxLayout()
-        file_box, fl = theme.card()
-        frow = QHBoxLayout()
-        ic = theme.label("▤", "iconBoxGreen")
-        ic.setFixedSize(40, 40)
-        ic.setAlignment(Qt.AlignCenter)
-        frow.addWidget(ic)
-        fc = QVBoxLayout()
-        fc.setSpacing(2)
-        fc.addWidget(self.data_label)
-        fc.addWidget(self.data_sub)
-        frow.addLayout(fc, 1)
-        frow.addWidget(buttons["데이터 고르기"])
-        fl.addLayout(frow)
-        s1.addWidget(file_box)
-        s1.addWidget(DropZone(lambda ps: self.set_data(ps[0]), "데이터 파일을 끌어다 놓아도 돼요", "CSV · TXT · XLSX · JSON",
-                              button_text="", file_filter=DATA_FILTER))
+        s1 = QVBoxLayout()      # 고르기와 끌어놓기를 한 상자로
+        drop = DropZone(lambda ps: self.set_data(ps[0]), "데이터 파일을 고르거나 끌어다 놓으세요",
+                        "CSV · TXT · XLSX · JSON  |  한 줄이 문서 하나예요", button_text="데이터 고르기", file_filter=DATA_FILTER)
+        self.data_label, self.data_sub = drop.title, drop.sub
+        s1.addWidget(drop)
         # 2단계 양식과 내용
         s2 = QVBoxLayout()
         s2.addWidget(theme.label("문서 양식", "muted"))
         trow = QHBoxLayout()
         trow.addWidget(self.template_box, 1)
         trow.addWidget(buttons["문서 관리"])
-        trow.addWidget(buttons["불러오기"])
         s2.addLayout(trow)
         s2.addWidget(self.hint)
         s2.addWidget(self.tree, 1)
@@ -113,16 +102,11 @@ class MakeTab(QWidget):
         r3.addWidget(self.out_label, 1)
         r3.addWidget(theme.label("파일 이름", "muted"))
         r3.addWidget(self.name_box)
-        r3.addWidget(theme.label("기본: 문서 → 문서1.docx,\n문서2.docx …", "muted"))
         r3.addWidget(buttons["저장 폴더 고르기"])
         r3.addWidget(buttons["만들기"])
         s3.addLayout(r3)
         r4 = QHBoxLayout()
-        r4c = QVBoxLayout()
-        r4c.setSpacing(0)
-        r4c.addWidget(theme.label("만든 문서를 다른 형식으로도 저장", "sectionTitle"))
-        r4c.addWidget(theme.label("저장 전에 이름을 고칠 수 있어요", "muted"))
-        r4.addLayout(r4c, 1)
+        r4.addStretch(1)
         for text, kind in (("PDF로 내보내기", "pdf"), ("이미지로 내보내기", "png")):
             b = theme.button(text)
             b.clicked.connect(lambda _=False, k=kind: self.convert(k))
@@ -193,7 +177,7 @@ class MakeTab(QWidget):
             except ValueError as err:
                 return self.hint.setText(str(err))
             order = "  ".join(f"{i}.{{{{{s}}}}}" for i, s in enumerate(slots, 1)) or "없음 — 양식에 {{칸 이름}}을 적어 두세요"
-            self.hint.setText("데이터 한 줄이 문서 하나예요. 값을 왼쪽부터 순서대로 양식의 빈칸에 넣어 docx로 만들어요"
+            self.hint.setText("데이터 한 줄이 문서 하나예요. 데이터와 양식을 고르면 바로 불러와요. 값을 왼쪽부터 순서대로 양식의 빈칸에 넣어 docx로 만들어요"
                               "(첫 줄이 제목이면 '첫 줄은 제목'을 체크하세요).\n이 양식의 빈칸 순서: " + order)
 
     # ── 불러오기·확인 ──
@@ -208,6 +192,12 @@ class MakeTab(QWidget):
         self.data_path = path
         self.data_label.setText(path.name + ("  (첫 줄은 제목)" if self.header else ""))
         self.data_sub.setText(str(path.parent))
+        self._auto_load()
+
+    def _auto_load(self) -> None:
+        """데이터와 양식이 둘 다 있으면 바로 불러온다([불러오기] 버튼 없음)."""
+        if self.data_path and self.template():
+            self.load()
 
     def _data_dialog(self, path: Path) -> bool | None:
         """-> 첫 줄을 제목으로 볼지(그만두면 None)."""
@@ -314,7 +304,7 @@ class MakeTab(QWidget):
             return res
         self.made = [r["path"] for r in res["results"] if r["path"]]
         self.made_base = self.svc._made_name(name)
-        self._say(f"{len(self.made)}건을 만들었어요 (워드 .docx) — {out_dir}\nPDF나 그림이 필요하면 아래 버튼을 누르세요.")
+        self._say(f"{len(self.made)}건을 만들었어요 (워드 .docx) — {out_dir}")
         return res
 
     def convert(self, kind: str) -> list[Path] | None:
@@ -341,11 +331,6 @@ class MakeTab(QWidget):
         return out
 
     # ── 파일 고르기 창 ──
-    def _pick_data(self) -> None:
-        p, _ = QFileDialog.getOpenFileName(self, "데이터 고르기", "", DATA_FILTER)
-        if p:
-            self.set_data(Path(p))
-
     def _pick_out(self) -> None:
         p = QFileDialog.getExistingDirectory(self, "저장 폴더 고르기")
         if p:

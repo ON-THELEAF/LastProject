@@ -15,7 +15,7 @@ BG, CARD, LINE = "#F7F9FC", "#FFFFFF", "#E7EBF1"
 WARN, WARN_SOFT, FAIL, FAIL_SOFT = "#B7791F", "#FFF6E5", "#D64545", "#FDECEC"
 
 QSS = f"""
-QWidget {{ color: {TEXT}; font-size: 13px; }}
+QWidget {{ color: {TEXT}; font-size: 14px; }}
 QMainWindow, QStackedWidget, QScrollArea, QScrollArea > QWidget > QWidget {{ background: {BG}; }}
 #header {{ background: {CARD}; border-bottom: 1px solid {LINE}; }}
 #footer {{ background: {CARD}; border-top: 1px solid {LINE}; }}
@@ -79,9 +79,10 @@ QListWidget, QTableWidget, QTreeWidget, QPlainTextEdit {{ background: {CARD}; bo
 QListWidget::item {{ border: 1px solid {LINE}; border-radius: 10px; padding: 10px; margin: 4px 2px; }}
 QListWidget::item:selected {{ background: #EEF3FD; border-color: #A9C1F5; color: {TEXT}; }}
 QHeaderView::section {{ background: #F5F7FB; color: {MUTED}; border: none; border-bottom: 1px solid {LINE};
-                        padding: 8px; font-size: 12px; font-weight: 700; }}
+                        padding: 8px; font-size: 13px; font-weight: 700; }}
 QTableWidget, QTreeWidget {{ gridline-color: {LINE}; selection-background-color: #E4ECFD; selection-color: {TEXT}; }}
 QTableWidget::item, QTreeWidget::item {{ padding: 6px; border-bottom: 1px solid #EFF2F7; }}
+QTableWidget, QTreeWidget, QListWidget {{ font-size: 15px; }}
 QComboBox, QLineEdit {{ background: {CARD}; border: 1px solid #D5DCE7; border-radius: 9px; padding: 8px 10px; }}
 QComboBox:focus, QLineEdit:focus {{ border-color: {BLUE}; }}
 QComboBox::drop-down {{ border: none; width: 26px; }}
