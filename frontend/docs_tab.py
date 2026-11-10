@@ -9,10 +9,11 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QListWidget, QListWidgetItem, QMessageBox, QTextBrowser,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QListWidget, QListWidgetItem, QMessageBox,
+                               QTextBrowser, QVBoxLayout, QWidget)
 
 import theme
+from home import DropZone
 
 SLOT = re.compile(r"(\{\{[^{}]*\}\})")
 
@@ -38,6 +39,7 @@ class DocsTab(QWidget):
     def __init__(self, svc, on_change=lambda: None, parent=None):
         super().__init__(parent)
         self.svc, self.on_change = svc, on_change      # on_change: 양식이 바뀌면(문서 만들기 목록 새로 고침)
+        self.just_added = None                          # 방금 추가한 양식(목록에 '방금 추가' 표시)
 
         self.list = QListWidget()
         self.list.currentRowChanged.connect(self._show)
@@ -102,7 +104,7 @@ class DocsTab(QWidget):
         self.list.blockSignals(True)
         self.list.clear()
         for t in self.templates:
-            self.list.addItem(QListWidgetItem("▤   " + t["name"]))
+            self.list.addItem(QListWidgetItem("▤   " + t["name"] + ("   · 방금 추가" if t["id"] == self.just_added else "")))
         self.list.blockSignals(False)
         self.count.setText(f"{len(self.templates)}개")
         ids = [t["id"] for t in self.templates]
@@ -149,6 +151,7 @@ class DocsTab(QWidget):
             t = self.svc.add_template(path)
         except ValueError as err:
             return QMessageBox.warning(self, "문서 양식 추가", str(err))
+        self.just_added = t["id"]
         self.refresh(t["id"])
         self.on_change()
 
@@ -174,6 +177,28 @@ class DocsTab(QWidget):
         self.on_change()
 
     def _pick(self) -> None:
-        p, _ = QFileDialog.getOpenFileName(self, "문서 양식 추가", "", "워드 양식 (*.docx)")
-        if p:
-            self.add(Path(p))
+        """문서 양식 추가 창: 워드 양식을 끌어다 놓거나 [파일 선택 및 추가]로 고른다."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("문서 양식 추가")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(theme.label("문서 양식 추가", "cardTitle"))
+        lay.addWidget(theme.label("추가한 양식은 문서 만들기에서 바로 사용할 수 있어요.", "muted"))
+        chosen: list[Path] = []
+
+        def take(paths: list[Path]) -> None:
+            chosen[:] = [Path(p) for p in paths if Path(p).suffix.lower() == ".docx"][:1]
+            if chosen:
+                dlg.accept()
+        lay.addWidget(DropZone(take, "워드 양식 파일을 끌어다 놓으세요", "지원 형식: .docx · 빈칸 표기: {{이름}}", button_text=""))
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = theme.button("취소")
+        cancel.clicked.connect(dlg.reject)
+        pick = theme.button("파일 선택 및 추가", "primary")
+        pick.clicked.connect(lambda: take([QFileDialog.getOpenFileName(dlg, "문서 양식 추가", "", "워드 양식 (*.docx)")[0]]))
+        row.addWidget(cancel)
+        row.addWidget(pick)
+        lay.addLayout(row)
+        dlg.resize(520, 260)
+        if dlg.exec() == QDialog.Accepted and chosen:
+            self.add(chosen[0])

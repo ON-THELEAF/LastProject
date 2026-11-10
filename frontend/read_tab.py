@@ -5,6 +5,7 @@ shortcut: 확대·축소·쪽 넘기기 버튼은 없다(칸을 누르면 그 �
 칸을 누르면 쪽 이미지 위에 그 칸 자리를 상자로 표시한다: 확인 필요 = 빨강, 그 밖 = 노랑.
 """
 import base64
+import html
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Slot
@@ -81,7 +82,7 @@ class ReadTab(QWidget):
         self.table.setShowGrid(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemChanged.connect(self._edited)
-        self.table.currentCellChanged.connect(lambda r, *_: self.mark(r))
+        self.table.currentCellChanged.connect(lambda r, *_: (self.mark(r), self.confirm_one.setVisible(r >= 0)))
         self._images = {}       # 문서 파일들 → [(쪽 QPixmap, 원래 폭)]
         self.kinds = {}
         for k in ("xlsx", "csv", "txt"):     # 내보낼 형식(여러 개 고를 수 있음)
@@ -90,7 +91,11 @@ class ReadTab(QWidget):
             self.kinds[k].setProperty("seg", True)
         self.kinds["xlsx"].setChecked(True)
 
-        b = {n: theme.button(n) for n in ("비교 값 적용", "되돌리기", "JSON 위치", "«")}
+        self.kinds["txt"].setToolTip("기본 구분 기호: |")
+        b = {n: theme.button(n) for n in ("이 칸 확정", "비교 값 적용", "되돌리기", "JSON 위치", "«")}
+        b["이 칸 확정"].clicked.connect(lambda: self.confirm_value(self.table.currentRow()))
+        self.confirm_one = b["이 칸 확정"]      # 칸을 골랐을 때만 보임
+        self.confirm_one.hide()
         b["되돌리기"].clicked.connect(lambda: self.undo(self.table.currentRow()))
         b.update({n: theme.button(n, "primary") for n in ("읽기 시작", "한 번에 확정", "↓  내보내기")})
         b["읽기 시작"].clicked.connect(self.start)
@@ -142,14 +147,26 @@ class ReadTab(QWidget):
         ml.addWidget(self.doc_title)
         ml.addWidget(self.page, 1)
         rcard, rl = theme.card()
-        rl.addWidget(theme.label("인식된 정보", "sectionTitle"))
-        rl.addWidget(theme.label("원본 값은 그대로 두고 비교 값만 수정해 판독 정확도를 높여요.", "muted", wrap=True))
+        rhead = QHBoxLayout()
+        rcol = QVBoxLayout()
+        rcol.setSpacing(2)
+        rcol.addWidget(theme.label("인식된 정보", "sectionTitle"))
+        rcol.addWidget(theme.label("원본 값은 그대로 두고 비교 값만 수정해 판독 정확도를 높여요.", "muted", wrap=True))
+        rhead.addLayout(rcol, 1)
+        self.new_badge = theme.badge("새 문서 · 칸 이름 수정 가능", "warn")    # 처음 보는 문서 종류일 때만
+        rhead.addWidget(self.new_badge, 0, Qt.AlignTop)
+        rl.addLayout(rhead)
         rl.addWidget(self.table, 1)
         row = QHBoxLayout()
         row.addStretch(1)
-        for n in ("비교 값 적용", "되돌리기", "한 번에 확정"):
+        for n in ("이 칸 확정", "비교 값 적용", "되돌리기", "한 번에 확정"):
             row.addWidget(b[n])
         rl.addLayout(row)
+        self.new_note = theme.label("ⓘ  새 문서의 칸 이름을 수정할 수 있어요. 내보낼 때 양식 등록 여부를 확인합니다.", "hint", wrap=True)
+        self.new_note.setContentsMargins(10, 6, 10, 6)
+        rl.addWidget(self.new_note)
+        self.new_badge.hide()
+        self.new_note.hide()
         self.lcard = lcard
         self.show_list = theme.button("»")      # 목록을 숨겼을 때 가운데 칸에서 다시 열기
         self.show_list.setToolTip("목록 보이기")
@@ -215,7 +232,8 @@ class ReadTab(QWidget):
         n = len(g["groups"]) if self.group else sum(len(x["files"]) for x in g["groups"])
         lines = [f"· {x['name']}: {', '.join(Path(f).name for f in x['files'])}" for x in g["groups"]] if self.group else []
         lines += [f"✕ {Path(x['file']).name}: {x['reason']}" for x in g["rejected"]]
-        self._say(f"문서 {n}건을 읽을게요. 맞으면 [읽기 시작]을 누르세요.\n" + "\n".join(lines))
+        self._notice(f"<b>새 파일이 추가됐어요</b>&nbsp;&nbsp; {n}개 파일이 읽기 대기 중이에요 — 읽기 시작을 눌러 주세요"
+                     + "".join("<br>" + html.escape(x) for x in lines))
         return g
 
     def start(self) -> None:
@@ -291,6 +309,9 @@ class ReadTab(QWidget):
         left = self.svc.review_left([doc])
         self.doc_title.setText(f"선택한 문서: {self._name(doc)} · {self._kind(doc)} · "
                                + (f"확인할 칸 {left}개" if left else "확인 필요 항목 없음"))
+        new = bool(doc.get("new_type"))
+        self.new_badge.setVisible(new)
+        self.new_note.setVisible(new)
         row = self.table.currentRow()
         self.table.blockSignals(True)
         self.table.setRowCount(len(doc["fields"]))
@@ -299,7 +320,7 @@ class ReadTab(QWidget):
                      self.pending.get((i, r), str(f.get("compare") or "")), f.get("reason") or "—"]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
-                if c != COMPARE:
+                if c != COMPARE and not (c == 0 and new):     # 새 문서는 칸 이름도 고칠 수 있다
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 if f["status"] == "review":
                     item.setBackground(QColor(theme.WARN_SOFT))
@@ -413,9 +434,21 @@ class ReadTab(QWidget):
         self._say(f"{f['label']}: 고치기 전 값으로 되돌렸어요")
 
     def _edited(self, item: QTableWidgetItem) -> None:
-        """비교 값 칸을 고치면 적어 두기만 한다([비교 값 적용]을 눌러야 반영)."""
+        """비교 값 칸을 고치면 적어 두기만 한다([비교 값 적용]을 눌러야 반영). 새 문서의 칸 이름은 바로 바꾼다."""
+        i, r = self.current(), item.row()
         if item.column() == COMPARE:
-            self.pending[(self.current(), item.row())] = item.text()
+            self.pending[(i, r)] = item.text()
+        elif item.column() == 0 and item.text().strip():
+            fields = list(self.docs[i]["fields"])
+            fields[r] = {**fields[r], "label": item.text().strip()}
+            self.docs[i] = {**self.docs[i], "fields": fields}
+
+    def confirm_value(self, r: int) -> None:
+        """[이 칸 확정]: 원본 값 그대로 사용자 확인."""
+        i = self.current()
+        if i < 0 or r < 0:
+            return self._say("칸을 고르세요")
+        self._set_field(r, self.docs[i]["fields"][r]["value"], "confirmed", advance=True)
 
     def confirm_all(self) -> None:
         """현재 문서의 확인 필요 칸만 보이는 값 그대로 확정."""
@@ -429,7 +462,7 @@ class ReadTab(QWidget):
     def export_to(self, path_stem: Path, append: bool = False, force: bool = False, only: list[str] | None = None) -> list[Path] | None:
         kinds = [k for k, c in self.kinds.items() if c.isChecked()]
         try:
-            out = self.svc.export(self.docs, kinds, Path(path_stem), append=append, force=force, only=only)
+            out = self.svc.export(self.docs, kinds, Path(path_stem), append=append, sep="|", force=force, only=only)
         except ValueError as err:
             return self._say(str(err))
         self._say("저장했어요:\n" + "\n".join(map(str, out)))
@@ -461,10 +494,44 @@ class ReadTab(QWidget):
             return None
         return [c.text() for c in boxes if c.isChecked()]
 
+    def _ask_register(self) -> bool:
+        """새 문서가 있으면 그 칸 이름을 문서 종류로 등록할지 묻는다. 창을 닫으면 내보내지 않음(False)."""
+        new = [k for k, d in enumerate(self.docs) if d.get("new_type")]
+        if not new:
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("새 문서 양식 등록")
+        names = ", ".join(self._kind(self.docs[k]) for k in new)
+        box.setText(f"<b>새 문서 양식을 등록할까요?</b><br>새로 인식한 {names}의 칸 이름을 다음 읽기에도 사용할 수 있어요.")
+        box.setInformativeText("\n".join(f"{self._name(self.docs[k])} — 새 칸 {len(self.docs[k]['fields'])}개" for k in new))
+        skip = box.addButton("등록하지 않고 내보내기", QMessageBox.RejectRole)
+        reg = box.addButton("양식 등록 후 내보내기", QMessageBox.AcceptRole)
+        box.exec()
+        if box.clickedButton() is reg:
+            return self._register(new)
+        return box.clickedButton() is skip
+
+    def _register(self, new: list[int]) -> bool:
+        """새 문서들의 (고친) 칸 이름을 문서 종류로 저장. 다음부터 그 칸들로 읽는다."""
+        for k in new:
+            doc = self.docs[k]
+            name = self._kind(doc)
+            try:
+                self.svc.save_custom_type(name, [f["label"] for f in doc["fields"]])
+            except ValueError as err:
+                self._say(str(err))
+                return False
+            self.docs[k] = {**doc, "new_type": False, "doc_name": name}
+            self.doc_list.item(k).setText(self._doc_title(self.docs[k]))
+        self._show_doc(self.current())
+        return True
+
     def _export_dialog(self) -> None:
         if not self.docs:
             return self._say("내보낼 문서가 없어요 — 먼저 문서를 읽으세요")
         self._autosave()
+        if not self._ask_register():
+            return
         force = False
         left = self.svc.review_left(self.docs)
         if left:
