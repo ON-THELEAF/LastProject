@@ -1,15 +1,15 @@
 # 화면 ↔ 기능 약속 (INTERFACE)
 
-화면(`frontend/`)은 `DesktopService`만 부릅니다. `bridgedocs.py`를 직접 부르지 않습니다.
+화면(`web_api.py`)은 `DesktopService`만 부릅니다. `bridgedocs.py`를 직접 부르지 않습니다.
 오류는 모두 **화면에 그대로 보여 줄 수 있는 한국어 문구의 `ValueError`** 로 옵니다.
 
 ## 시작
 
 ```python
-import sys; sys.path.insert(0, "pipeline")
-from desktop import offline
+import sys; sys.path[:0] = [".", "SERVER", "Fuc"]   # 프로젝트 맨 위에서
+import offline
 models = offline.setup_offline(offline.app_base())   # torch·paddle을 불러오기 전에
-from desktop.service import DesktopService
+from service import DesktopService
 svc = DesktopService(models)
 ```
 

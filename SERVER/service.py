@@ -1,9 +1,9 @@
-"""화면(frontend/)이 부르는 유일한 입구. 화면은 bridgedocs.py를 직접 부르지 않는다.
+"""화면(web_api.py)이 부르는 유일한 입구. 화면은 bridgedocs.py를 직접 부르지 않는다.
 
 시작 순서(화면 쪽):
-    from desktop import offline
+    import offline
     models = offline.setup_offline(offline.app_base())   # torch·paddle을 불러오기 전에
-    from desktop.service import DesktopService
+    from service import DesktopService
     svc = DesktopService(models)
 
 오류는 화면에 그대로 보여 줄 수 있는 한국어 문구의 ValueError로 알린다.
@@ -13,15 +13,16 @@ import threading
 import zipfile
 from pathlib import Path
 
-from desktop import offline
+import offline
 
 offline.ensure_offline()   # torch·transformers·paddle을 불러오기 전에(이미 설정했으면 그대로 둠)
 
 from PySide6.QtCore import QThread, QTimer, Qt  # noqa: E402
 
 import bridgedocs as bd  # noqa: E402
-from desktop import export  # noqa: E402
-from desktop.worker import Engine, ReadJob  # noqa: E402
+from DB import storage  # noqa: E402
+from Fuc.export import export  # noqa: E402
+from worker import Engine, ReadJob  # noqa: E402
 
 
 class DesktopService:
@@ -168,16 +169,7 @@ class DesktopService:
     @staticmethod
     def save_doc(doc: dict) -> None:
         """확인 중인 문서(사용자가 확정·고친 값 포함)를 읽을 때 만든 JSON에 다시 저장한다(다른 문서로 넘어갈 때 자동 저장)."""
-        path = doc.get("json_path")
-        if not path:
-            return
-        p = Path(path)
-        try:
-            tmp = p.with_suffix(".tmp")
-            tmp.write_text(json.dumps({k: v for k, v in doc.items() if k != "json_path"}, ensure_ascii=False, indent=1), encoding="utf-8")
-            tmp.replace(p)
-        except OSError as err:
-            raise ValueError(f"확인한 내용을 저장할 수 없음 — {p} ({err.strerror or err})") from err
+        storage.save_result(doc)
 
     def page_images(self, doc: dict, width: int = 900) -> list[dict]:
         """쪽 이미지: [{"src": base64 JPEG(가로 width), "w": 원래 가로, "h": 원래 세로}]. 칸의 line_box는 원래 크기 좌표.

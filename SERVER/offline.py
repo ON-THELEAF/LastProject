@@ -18,7 +18,7 @@ def app_base() -> Path:
     """묶은 exe면 exe가 있는 폴더, 소스 실행이면 저장소 루트."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]
 
 
 _models: Path | None = None   # 마지막으로 설정한 models 폴더

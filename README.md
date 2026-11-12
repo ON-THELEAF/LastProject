@@ -1,20 +1,18 @@
 # BridgeDocs (가칭) — 부동산 문서 IDP 졸업작품
 
-부동산 문서와 자격증·수료증·성적증명서(한국어·영어)(PDF·이미지·docx)에서 필요한 값을 읽고, AI가 잘못 읽었을 수 있는 칸을 골라 사람이 확인한 뒤, 엑셀·CSV·txt로 내보낸다. 반대로 데이터를 넣으면 문서를 만든다. 인터넷 없이 Windows GPU PC(RTX 3060 12GB 이상)에서 도는 **윈도우 프로그램**(PySide6)이다.
+부동산 문서와 자격증·수료증·성적증명서(한국어·영어)(PDF·이미지·docx)에서 필요한 값을 읽고, AI가 잘못 읽었을 수 있는 칸을 골라 사람이 확인한 뒤, 엑셀·CSV·txt로 내보낸다. 반대로 데이터를 넣으면 문서를 만든다. 인터넷 없이 Windows GPU PC(RTX 3060 12GB 이상)에서 도는 **윈도우 프로그램**이다. 화면은 웹(React)으로 만들어 이 PC 안(127.0.0.1)에서만 열고 Edge 앱 창으로 띄운다.
 
-> 화면↔기능 약속은 [`frontend/INTERFACE.md`](frontend/INTERFACE.md)가 기준이다.
+> 엔진(DesktopService) 약속은 [`SERVER/INTERFACE.md`](SERVER/INTERFACE.md)가 기준이다.
 
 ## 실행
 
-- 소스로(GPU PC): `python frontend\app.py`
-- 엔진만 명령줄로: `python pipeline/bridgedocs.py run 문서.pdf …` / `make 데이터.csv` — [`pipeline/README.md`](pipeline/README.md)
+- 소스로(GPU PC): `BridgeDocs 실행.bat` 또는 `python SERVER\web_app.py` (먼저 `Front` 폴더에서 `npm install` → `npm run build`로 `Front/dist/`를 만든다. 화면을 고치면 다시 `npm run build`)
+- 엔진만 명령줄로: `python Fuc/bridgedocs.py run 문서.pdf …` / `make 데이터.csv` — [`Fuc/README.md`](Fuc/README.md)
 
 ## 시스템 구조
 
-그림: [`docs/프로그램 구조도 (11.2).png`](<docs/프로그램 구조도 (11.2).png>) · 고치려면 [`docs/프로그램 구조도(11.2).excalidraw`](<docs/프로그램 구조도(11.2).excalidraw>) (VS Code Excalidraw 확장으로 열기)
-
 ```
-화면 frontend/  →  백엔드 pipeline/desktop/service.py  →  엔진 pipeline/bridgedocs.py  →  모델 models/
+화면 Front/  →  서버 SERVER/(web_app·web_api·service)  →  기능 Fuc/(bridgedocs.py가 입구)  →  저장 DB/ · 모델 models/
 ```
 
 | 단계 | 하는 일 |
@@ -30,10 +28,10 @@
 
 | 폴더/파일 | 내용 |
 |---|---|
-| `frontend/` | 화면: `app.py`(창·위쪽 메뉴), `home.py`(홈), `read_tab.py`(문서 읽기), `make_tab.py`(문서 만들기), `docs_tab.py`(문서 관리: 워드 양식 추가·삭제·미리보기), `theme.py`(모양), `INTERFACE.md`(약속) |
-| `pipeline/desktop/` | 백엔드: `service.py`(화면이 부르는 유일한 입구), `worker.py`(작업 스레드), `export.py`(검사·내보내기), `offline.py`(인터넷 차단·모델 위치) |
-| `pipeline/bridgedocs.py` | 엔진 전체(읽기 1~3단계, 문서 만들기, 실험 도구) |
-| `docs/` | 프로그램 구조도 |
+| `Front/` | 화면. `src/`(피그마 메이크 코드 기반): `App.tsx`(홈·위쪽 메뉴), `reader.tsx`(문서 읽기·결과 확인·내보내기), `make.tsx`(문서 만들기 1~3단계), `documents.tsx`(문서 관리), `ui.tsx`(공통 모양), `api.ts`(엔진 부르기). `dist/`는 `npm run build` 결과(저장소에 안 올림) |
+| `SERVER/` | 서버: `web_app.py`(이 PC 안 서버·Edge 앱 창), `web_api.py`(화면 버튼 ↔ DesktopService), `service.py`(엔진의 유일한 입구), `worker.py`(읽기 작업 스레드), `offline.py`(인터넷 차단·모델 위치·설정.json), `INTERFACE.md`(약속), `requirements.txt` |
+| `Fuc/` | 기능: `bridgedocs.py`(입구·명령줄) 아래 기능별 폴더 — `path_a_ocr`(A경로 OCR), `pdf_text`(PDF 안 글자), `docx_read`(docx 글자), `path_b_vlm`(B경로 AI 질문), `hallucination_check`(환각검증·재판독), `read_pipeline`(문서 읽기 전체 흐름·종류 판별·기울기 보정), `view`(결과 보기 HTML), `export`(판정·내보내기), `make_doc`(문서 만들기), `scoring`(정답 비교) |
+| `DB/` | 저장·불러오기: `storage.py`(새 문서 종류 목록 JSON, 워드 양식 폴더, 결과 JSON 다시 저장) |
 | `models/` | AI 모델(약 9GB, 저장소에 안 올림) |
 
 ## 설치할 때 정하는 폴더
