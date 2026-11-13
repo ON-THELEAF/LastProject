@@ -20,7 +20,7 @@ HERE = Path(__file__).parent
 
 def make_ocr():
     from paddleocr import PaddleOCR
-    # ponytail: 서버용 검출 모델(PP-OCRv5_server_det)은 전체 페이지 1장에 120~170초(M1 CPU)라 모바일 검출 모델을 쓴다.
+    # 기본은 모바일 검출 모델(서버용은 CPU에서 쪽마다 2분 넘게 걸린다, 실측).
     # 주의: 모델 이름을 하나라도 직접 지정하면 lang='korean'이 무시돼 인식 모델이 한국어가 아니게 된다(실측) → rec도 명시.
     # BD_OCR=server 이면 서버용 검출 모델(GPU에서는 빠름). 인식 모델은 한국어 전용 모바일 그대로.
     return PaddleOCR(lang="korean", text_detection_model_name=OCR_DET,

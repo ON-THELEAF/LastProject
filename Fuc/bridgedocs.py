@@ -28,18 +28,16 @@ import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
-# ponytail: Colab(리눅스 x86)에서 oneDNN 가속 경로가 "ConvertPirAttribute2RuntimeAttribute not support" 오류를 낸다(실측).
-# 맥(ARM)에는 없는 경로라 맥에서는 안 났다. 속도는 조금 느려질 수 있지만 가속을 꺼서 우회한다.
+# x86 CPU에서 paddle의 oneDNN 가속 경로가 "ConvertPirAttribute2RuntimeAttribute not support" 오류를 낸다(실측). 가속을 꺼서 우회한다.
 os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "False")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
 
 # Windows: torch와 paddle이 이름이 같은 CUDA DLL(cuDNN·cuBLAS)을 따로 갖고 있어, paddle을 먼저 불러오면 torch가 깨진다(실측).
 # torch를 먼저 불러오면 둘 다 동작한다(cuDNN은 torch와 같은 9.10으로 맞춤, 설치는 README 참고).
-if sys.platform == "win32":
-    try:
-        import torch  # noqa: F401
-    except ImportError:
-        pass  # torch가 없는 환경(A경로만 쓸 때)은 순서 문제가 없다
+try:
+    import torch  # noqa: F401
+except ImportError:
+    pass  # torch가 없는 환경(A경로만 쓸 때)은 순서 문제가 없다
 
 import pymupdf  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402

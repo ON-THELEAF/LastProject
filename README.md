@@ -6,6 +6,8 @@
 
 ## 실행
 
+- **팀원 PC 처음 한 번:** Git·Python 3.11·Node.js를 깔고 `git clone https://github.com/ON-THELEAF/LastProject.git` → `BridgeDocs 설치.bat`(패키지 설치·화면 빌드·AI 모델 약 9GB 받기, 모델은 git에 안 올라감)
+- **그다음부터:** `BridgeDocs 실행.bat`만 누른다. 켤 때마다 GitHub에서 최신 코드를 받고(`git pull`), 바뀐 게 있으면 패키지·화면을 다시 빌드한 뒤 실행한다. 내 수정을 팀원에게 주려면 커밋하고 `git push`.
 - 소스로(GPU PC): `BridgeDocs 실행.bat` 또는 `python SERVER\web_app.py` (먼저 `Front` 폴더에서 `npm install` → `npm run build`로 `Front/dist/`를 만든다. 화면을 고치면 다시 `npm run build`)
 - 엔진만 명령줄로: `python Fuc/bridgedocs.py run 문서.pdf …` / `make 데이터.csv` — [`Fuc/README.md`](Fuc/README.md)
 
