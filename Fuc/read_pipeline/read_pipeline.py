@@ -30,7 +30,7 @@ LANG_LABEL = {"ko": "한국어", "en": "영어"}
 LANG_CODE = {v: k for k, v in LANG_LABEL.items()}
 FIELD_LABEL = {k: s["label"] for k, s in all_builtin_specs().items()}
 DOC_TYPE_WORDS = [(t, f["words"]) for t, f in _FORMS.items()]       # 앞이 우선(상가건물임대차를 주택임대차보다 먼저)
-FIELD_PAGE_WORDS = {k: s["page_words"] for k, s in all_builtin_specs().items() if s.get("page_words")}
+ANSWER_WORDS = DOC_TYPE_WORDS + [(t, f["answer_words"]) for t, f in _FORMS.items() if f.get("answer_words")]   # AI 답을 종류로 바꿀 때
 
 
 def form_of(doc_type, custom_name=None):
@@ -181,7 +181,7 @@ def resolve_ai_type(ans):
     sq = squash(a)      # AI가 띄어쓰기만 다르게 답해도 알려진 종류로
     t = resolve_type(a) or next((k for k, lab in DOC_TYPE_LABEL.items()
                                  if any(x and squash(x) in sq for x in [lab, *lab.split("·")])), None)
-    t = t or next((d for d, words in DOC_TYPE_WORDS + [(d, f["answer_words"]) for d, f in _FORMS.items() if f.get("answer_words")] if any(w in sq.casefold() for w in words)), None)
+    t = t or next((d for d, words in ANSWER_WORDS if any(w in sq.casefold() for w in words)), None)
     if t:
         return t, None
     return "custom", a
@@ -205,58 +205,25 @@ def parse_json_obj(ans):
             for k, v in data.items() if str(k).strip() and v is not None} if isinstance(data, dict) else {}
 
 
-def custom_fields(model, proc, name, pages, lines_list, is_docx, check, labels=None):
-    """새 문서 종류 읽기(모든 쪽). 칸 이름이 정해져 있으면(확정해 둔 종류, 또는 사용자가 읽기 전에 고른 칸 labels)
-    쪽마다 그 칸을 두 번(사진+OCR, 사진만) 읽어 같으면 자동 확정. 앞 쪽에서 찾은 칸은 뒤 쪽에서 다시 묻지 않는다.
-    처음 보는 종류면 AI가 쪽마다 칸을 골라 읽고(합쳐 15개까지) 모두 사용자 확인.
-    -> (fields, 처음 보는 종류인지)"""
-    saved = list(labels) if labels else custom_types().get(name)
-    first, second, page_of = {}, {}, {}
+def custom_fields(model, proc, name, pages, lines_list, is_docx, check):
+    """처음 보는 문서 종류 읽기(모든 쪽): AI가 쪽마다 칸을 골라 읽고(합쳐 15개까지) 모두 사용자 확인.
+    저장해 둔 사용자 양식은 form_of()로 read_fields()를 탄다. -> (fields, 처음 보는 종류인지=True)"""
+    first, page_of = {}, {}
     for i in range(len(lines_list)):
         check()
-        if saved:
-            todo = [lab for lab in saved if first.get(lab, "").strip() in ("", "없음")]
-            if not todo:
-                break
-            q = JOINT_PRE + "\n".join(f'- "{lab}": 문서에 적힌 \'{lab}\'의 값' for lab in todo)
-            budget = 40 * len(todo) + 40
-            if is_docx:
-                a, b = parse_joint(ask_text(model, proc, docx_body(lines_list[i]) + "\n\n" + text_question(q), max_new=budget), todo), None
-            else:
-                a = parse_joint(ask(model, proc, pages[i], with_ocr(q, lines_list[i]), max_new=budget)[0], todo)
-                check()
-                try:
-                    b = parse_joint(ask(model, proc, pages[i], q, max_new=budget)[0], todo)
-                except Exception:   # 두 번째 판독 실패: 그 칸들은 '한 번만 읽음'으로 사용자 확인
-                    b = None
-            for lab in todo:
-                v = a.get(lab, "")
-                if lab not in first or v.strip() not in ("", "없음"):
-                    first[lab], page_of[lab] = v, i + 1
-                    second.pop(lab, None)
-                    if b is not None:
-                        second[lab] = b.get(lab)
+        if len(first) >= 15:
+            break
+        if is_docx:
+            got = parse_json_obj(ask_text(model, proc, docx_body(lines_list[i]) + "\n\n" + NEW_TYPE_Q, max_new=600))
         else:
-            if len(first) >= 15:
-                break
-            if is_docx:
-                got = parse_json_obj(ask_text(model, proc, docx_body(lines_list[i]) + "\n\n" + NEW_TYPE_Q, max_new=600))
-            else:
-                got = parse_json_obj(ask(model, proc, pages[i], with_ocr(NEW_TYPE_Q, lines_list[i]), max_new=600)[0])
-            for k, v in got.items():
-                if k not in first and len(first) < 15:
-                    first[k], page_of[k] = v, i + 1
-    out = []
-    for lab in saved or list(first):
-        v1 = first.get(lab, "")
-        v2 = second.get(lab)
-        same = v2 is not None and v1.strip() not in ("", "없음") and squash(v1) == squash(v2)
-        reason = ("" if same else "처음 보는 문서 종류 — 칸 이름과 값을 확인하세요" if not saved
-                  else f"두 번 읽은 값이 다름({v1[:20]} / {(v2 or '')[:20]})" if v2 else "한 번만 읽음 — 확인하세요")
-        cands = [x for x in dict.fromkeys([v1, v2 or ""]) if x] if not same else []
-        out.append({"key": lab, "label": lab, "kind": "text", "value": v1, "status": "auto" if same else "review", "reason": reason,
-                    "candidates": cands, "page": page_of.get(lab, 1), "line_box": None, "compare": next((x for x in cands if x != v1), "")})
-    return out, not saved
+            got = parse_json_obj(ask(model, proc, pages[i], with_ocr(NEW_TYPE_Q, lines_list[i]), max_new=600)[0])
+        for k, v in got.items():
+            if k not in first and len(first) < 15:
+                first[k], page_of[k] = v, i + 1
+    out = [{"key": lab, "label": lab, "kind": "text", "value": v, "status": "review",
+            "reason": "처음 보는 문서 종류 — 칸 이름과 값을 확인하세요", "candidates": [v] if v else [],
+            "page": page_of.get(lab, 1), "line_box": None, "compare": ""} for lab, v in first.items()]
+    return out, True
 
 
 class Cancelled(Exception):
@@ -338,7 +305,7 @@ def read_fields(fm, model, proc, pages, lines_list, is_docx, check, mode="field"
             try:
                 row["ans2"] = ask(model, proc, pages[pi], q, max_new=64)[0]
                 if v not in ("", "없음") and sp.get("zoom") == "number":
-                    row["zoom"] = zoom_number(model, proc, pages[pi], lines_list[pi], sp, v)
+                    row["zoom"] = zoom_number(model, proc, pages[pi], lines_list[pi], kind, v)
                 elif v not in ("", "없음") and zooms_name(sp):
                     row["zoom"] = zoom_name(model, proc, pages[pi], lines_list[pi], kind, v)
             except Exception:   # 두 번째 판독 실패: 그 칸은 사용자 확인

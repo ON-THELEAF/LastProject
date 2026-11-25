@@ -54,13 +54,20 @@ def guess_kind(label):
     return "text"
 
 
+def field_kind(label, kind=None):
+    """정해 둔 칸 종류가 맞으면 그대로, 아니면 칸 이름으로 짐작."""
+    return kind if kind in KINDS else guess_kind(label)
+
+
 def custom_form(name, fields):
     """사용자 양식 하나. fields: [{"label", "kind"?}] 또는 칸 이름 목록(옛 형식)."""
     out = {}
     for f in fields:
         label = (f.get("label") if isinstance(f, dict) else str(f)).strip()
-        kind = f.get("kind") if isinstance(f, dict) and f.get("kind") in KINDS else guess_kind(label)
+        kind = field_kind(label, f.get("kind") if isinstance(f, dict) else None)
         out[label] = {"key": label, "label": label, "kind": kind}
+        if kind == "flag":      # 기본 양식처럼 있음/없음을 확인할 낱말('주차 여부' → '주차')
+            out[label]["flag_word"] = re.sub(r"\s|(유무|여부)$", "", label)
     return {"id": "custom", "name": name, "words": [], "fields": out, "rules": []}
 
 

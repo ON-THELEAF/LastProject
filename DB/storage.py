@@ -24,9 +24,9 @@ def _custom_raw(strict=False):
     return {k: list(v) for k, v in data.items() if isinstance(v, list)} if isinstance(data, dict) else {}
 
 
-def custom_types(strict=False):
+def custom_types():
     """사용자 양식 {종류 이름: [칸 이름]} (화면이 쓰는 모양)."""
-    return {k: [f["label"] if isinstance(f, dict) else str(f) for f in v] for k, v in _custom_raw(strict).items()}
+    return {k: [f["label"] if isinstance(f, dict) else str(f) for f in v] for k, v in _custom_raw().items()}
 
 
 def custom_forms():
@@ -44,7 +44,7 @@ def save_custom_type(name, labels, kinds=None):
     if resolve_type(name):
         raise ValueError(f"'{name}'은 이미 있는 문서 종류예요")
     kinds = kinds or {}
-    fields = [{"label": lab, "kind": kinds[lab] if kinds.get(lab) in KINDS else guess_kind(lab)} for lab in labels]
+    fields = [{"label": lab, "kind": field_kind(lab, kinds.get(lab))} for lab in labels]
     data = {**_custom_raw(strict=True), name: fields}
     p = custom_path()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -87,5 +87,5 @@ def save_result(doc):
 
 
 # 함수 안에서만 쓰는 다른 기능의 이름: 맨 아래에서 불러온다(서로 부르는 기능끼리 순환해도 됨)
-from DB.forms import KINDS, custom_form, guess_kind  # noqa: E402,F401
+from DB.forms import KINDS, custom_form, field_kind, guess_kind  # noqa: E402,F401
 from Fuc.make_doc.make_doc import resolve_type  # noqa: E402,F401

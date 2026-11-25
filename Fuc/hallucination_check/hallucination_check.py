@@ -114,7 +114,7 @@ def any_dates(text):
     return out
 
 
-def lang_field(page_lines_list, key="cert_lang", label="문서 언어"):
+def lang_field(page_lines_list, key, label):
     """'문서 언어' 칸(양식에서 computed: lang): 한글이 10자 이상이면 한국어, 아니면 영어."""
     text = " ".join(L["text"] for lines in page_lines_list for L in lines)
     code = "ko" if sum("가" <= c <= "힣" for c in text) >= 10 else "en"
@@ -202,8 +202,8 @@ def governing(text, pos):
 def check_field(kind, key, value, lines, spec=None):
     """-> dict(exists, state, label_ok(None=라벨 없음/해당 없음), kw(키워드로 확인함), ys(성명 줄 y), reason)
     state: pass / contradict(그 자리가 읽혔는데 값이 다름·답이 없음) / unknown(OCR이 그 부분을 못 읽어 판단 불가)
-    spec: 양식의 칸 설정(없으면 기본 양식에서 key로 찾는다)."""
-    spec = spec if spec is not None else SPECS.get(key, {})
+    spec: 양식의 칸 설정."""
+    spec = spec or {}
     v = clean(kind, value)
 
     def out(exists, state, label_ok=None, ys=None, reason="", kw=False, suggest=None):
@@ -356,7 +356,7 @@ def cross_pairs(rules, vals, ys, kinds=None):
     kinds = kinds or {}
 
     def kind(k):
-        return kinds.get(k) or SPECS.get(k, {}).get("kind", "text")
+        return kinds.get(k, "text")
 
     p = []
     for rule in rules or []:
@@ -455,7 +455,7 @@ def second_read_issue(key, kind, ans, ans2, strict=False, spec=None):
             return ""       # 다시 읽기에서 값을 못 찾은 것은 반대 증거가 아니다
         if isinstance(a, str) and isinstance(b, str) and squash(unicodedata.normalize("NFKC", a)) == squash(unicodedata.normalize("NFKC", b)):
             return ""       # 모양만 다른 같은 글자(Ⅰ/I, 전각 숫자, 띄어쓰기)
-        if (spec if spec is not None else SPECS.get(key, {})).get("id") and alnum_key(a) == alnum_key(b):
+        if (spec or {}).get("id") and alnum_key(a) == alnum_key(b):
             return ""
         return f"OCR 없이 다시 읽은 값과 다름({clean(kind, ans2)[:30]})"
     if kind == "name" and len(a) == len(b) and 1 <= edit_distance(jamo(a), jamo(b)) <= 3:
@@ -506,11 +506,11 @@ def zoom_raw(model, proc, img, part, pad=8, scale=3):
     return ask(model, proc, crop, ZOOM_Q, max_new=48)[0]
 
 
-def zoom_number(model, proc, img, lines, spec, value):
+def zoom_number(model, proc, img, lines, kind, value):
     """숫자 칸(증명서 번호·등급·취득일)의 확대 재판독 값. OCR이 숫자 하나를 잘못 읽고(885→865) AI가 따라 쓴 경우를 잡는다.
     칸을 못 찾거나 다시 읽은 글자에서 비교할 값을 못 뽑으면 None(판단 보류)."""
     parts = [q for L in lines for q in L.get("parts", [])]
-    if spec["kind"] == "date":
+    if kind == "date":
         want = norm("date", value)
         part = next((q for q in parts if any(d[:3] == want for d in any_dates(q["text"]))), None)
         if part is None:
@@ -571,7 +571,7 @@ def zoom_issue(key, kind, ans, z, spec=None):
     """확대해 다시 읽은 값(z)과 다르면 사유, 아니면 ''."""
     if z is None or ans is None:
         return ""
-    spec = spec if spec is not None else SPECS.get(key, {})
+    spec = spec or {}
     if spec.get("zoom") == "number":
         a, b = norm(kind, clean(kind, ans)), norm(kind, clean(kind, z))
         x, y = (alnum_key(a), alnum_key(b)) if spec.get("id") else (a, b)
@@ -589,12 +589,12 @@ def compute_checks(gt, docs, answers, cache, crops=None):
     crops = crops or {}
     res = {}
     for name in docs:
-        doc, vals, ys, per = gt[name], {}, {}, {}
+        doc, vals, ys, per, sps = gt[name], {}, {}, {}, {}
         for key, f in doc["fields"].items():
             r = answers.get((name, key))
             if f["b_skip"] or r is None:
                 continue
-            sp = f.get("spec") or SPECS.get(key, {})
+            sp = sps[key] = f.get("spec") or SPECS.get(key, {})   # 옛 정답 파일은 칸 설정 없이 key만 온다
             c = check_field(f["kind"], key, r["ans"], cache[doc["pages"][f["page"] - 1]], sp)
             if (f["kind"] in NAME_KINDS and c["reason"].startswith("페이지에서 값을 못 찾음")
                     and (r.get("zoom") and not zoom_issue(key, f["kind"], r["ans"], r["zoom"], sp)
@@ -618,7 +618,6 @@ def compute_checks(gt, docs, answers, cache, crops=None):
             seen = cm["crop"] not in VOCAB and format_ok(f["kind"], cm["crop"]) and occurrences(f["kind"], cm["crop"], cache[doc["pages"][f["page"] - 1]])
             return bool(seen)
         crop_bad = {k: crop_disagrees(k) for k in per}
-        sps = {k: doc["fields"][k].get("spec") or SPECS.get(k, {}) for k in per}
         second = {k: zoom_issue(k, doc["fields"][k]["kind"], answers[(name, k)].get("ans"), answers[(name, k)].get("zoom"), sps[k])
                   or second_read_issue(k, doc["fields"][k]["kind"], answers[(name, k)].get("ans"), answers[(name, k)].get("ans2"),
                                        strict=answers[(name, k)].get("strict2", False), spec=sps[k]) for k in per}
