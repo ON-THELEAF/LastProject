@@ -152,10 +152,10 @@ class DesktopService:
         """사용자가 확정한 새 문서 종류: {종류 이름: [칸 이름]}."""
         return bd.custom_types()
 
-    def save_custom_type(self, name: str, labels: list[str]) -> dict:
+    def save_custom_type(self, name: str, labels: list[str], kinds: dict | None = None) -> dict:
         """읽기 결과의 new_type이 True인 문서: 사용자가 칸 목록을 고치고 확정하면 저장한다. 다음에 같은 종류는 이 칸들을 읽는다."""
         try:
-            return bd.save_custom_type(name, labels)
+            return bd.save_custom_type(name, labels, kinds)
         except OSError as err:
             raise ValueError(f"새 문서 종류를 저장할 수 없음 — {bd.custom_path()} ({err.strerror or err})") from err
 

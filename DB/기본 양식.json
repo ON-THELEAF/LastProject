@@ -1,0 +1,648 @@
+{
+ "설명": "기본 제공 문서 양식. 문서 종류·칸·칸 종류·AI 질문·검사 규칙을 코드 대신 여기에 둔다. 사용자가 만든 양식도 같은 모양(칸마다 label·kind)으로 저장된다.",
+ "label_words": [
+  "권리자",
+  "변동일자",
+  "영수자",
+  "융자금",
+  "임대보증금",
+  "전화",
+  "주민등록번호",
+  "중도금",
+  "착공일",
+  "채무자",
+  "허가일",
+  "환산보증금"
+ ],
+ "label_order": [
+  "registry",
+  "lease",
+  "sale",
+  "ledger",
+  "store_lease",
+  "cert"
+ ],
+ "forms": [
+  {
+   "id": "store_lease",
+   "name": "상가건물 임대차계약서",
+   "words": [
+    "상가건물임대차"
+   ],
+   "fields": [
+    {
+     "key": "st_lessor",
+     "label": "임대인",
+     "kind": "name",
+     "q": "이 상가건물 임대차계약서의 임대인 이름만 적으세요. 임차인 이름이 아닙니다.",
+     "hint": "(맨 위 '임대인( )과 임차인( )' 문장의 '임대인(' 바로 뒤 괄호 안)",
+     "aliases": [
+      "임대인"
+     ]
+    },
+    {
+     "key": "st_lessee",
+     "label": "임차인",
+     "kind": "name",
+     "q": "이 상가건물 임대차계약서의 임차인 이름만 적으세요. 임대인 이름이 아닙니다.",
+     "hint": "(맨 위 '임대인( )과 임차인( )' 문장의 '임차인(' 바로 뒤 괄호 안)",
+     "aliases": [
+      "임차인"
+     ]
+    },
+    {
+     "key": "st_deposit",
+     "label": "보증금",
+     "kind": "amount",
+     "q": "보증금 금액을 쉼표 포함 숫자로만 적으세요(예: 50,000,000). 환산보증금·계약금이 아닙니다.",
+     "hint": "(제1조 표의 '보증금' 줄, '원정(₩' 뒤)",
+     "aliases": [
+      "보증금"
+     ]
+    },
+    {
+     "key": "st_rent",
+     "label": "차임(월세)",
+     "kind": "amount",
+     "q": "차임(월세) 금액을 쉼표 포함 숫자로만 적으세요(예: 2,500,000). 관리비·보증금이 아닙니다.",
+     "hint": "(제1조 표의 '차임(월세)' 줄, '원정(₩' 뒤)",
+     "aliases": [
+      "차임",
+      "월세"
+     ]
+    },
+    {
+     "key": "st_mgmt_fee",
+     "label": "관리비",
+     "kind": "amount",
+     "q": "관리비 금액을 쉼표 포함 숫자로만 적으세요(예: 300,000). 차임(월세)이 아닙니다.",
+     "hint": "(제1조 표의 '관리비' 줄, '원정(₩' 뒤)",
+     "aliases": [
+      "관리비"
+     ]
+    },
+    {
+     "key": "st_start",
+     "label": "임대차 시작일",
+     "kind": "date",
+     "q": "임차 상가건물을 임차인에게 인도하는 날짜(임대차기간의 시작)를 YYYY-MM-DD 형식으로 적으세요.",
+     "hint": "(제2조 '…년 …월 …일까지 임차인에게 인도하고' 부분)",
+     "aliases": [
+      "상태로"
+     ]
+    },
+    {
+     "key": "st_end",
+     "label": "임대차 종료일",
+     "kind": "date",
+     "q": "임대차기간이 끝나는 날짜를 YYYY-MM-DD 형식으로 적으세요.",
+     "hint": "(제2조 '임대차기간은 인도일로부터 …년 …월 …일까지로 한다' 부분)",
+     "aliases": [
+      "인도일로부터"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "type": "differ",
+     "keys": [
+      "st_lessor",
+      "st_lessee"
+     ],
+     "why": "임대인=임차인"
+    },
+    {
+     "type": "less",
+     "a": "st_rent",
+     "b": "st_deposit",
+     "why": "차임이 보증금 이상"
+    }
+   ]
+  },
+  {
+   "id": "lease",
+   "name": "주택임대차계약서",
+   "words": [
+    "주택임대차"
+   ],
+   "fields": [
+    {
+     "key": "lessor_name",
+     "label": "임대인",
+     "kind": "name",
+     "q": "이 임대차계약서의 임대인 이름만 적으세요. 임차인 이름이 아닙니다.",
+     "hint": "(맨 위 '임대인( )과 임차인( )' 문장의 '임대인(' 바로 뒤 괄호 안)",
+     "aliases": [
+      "임대인"
+     ]
+    },
+    {
+     "key": "lessee_name",
+     "label": "임차인",
+     "kind": "name",
+     "q": "이 임대차계약서의 임차인 이름만 적으세요. 임대인 이름이 아닙니다.",
+     "hint": "(맨 위 '임대인( )과 임차인( )' 문장의 '임차인(' 바로 뒤 괄호 안)",
+     "aliases": [
+      "임차인"
+     ]
+    },
+    {
+     "key": "deposit_amount",
+     "label": "보증금",
+     "kind": "amount",
+     "q": "보증금 금액을 쉼표 포함 숫자로만 적으세요(예: 120,000,000). 월세가 아닙니다.",
+     "hint": "(제1조 표의 '보증금' 줄, '원정(₩' 뒤)",
+     "aliases": [
+      "보증금"
+     ]
+    },
+    {
+     "key": "monthly_rent",
+     "label": "차임(월세)",
+     "kind": "amount",
+     "q": "차임(월세) 금액을 쉼표 포함 숫자로만 적으세요(예: 1,200,000). 보증금이 아닙니다.",
+     "hint": "(제1조 표의 '차임(월세)' 줄, '금' 뒤)",
+     "aliases": [
+      "차임",
+      "월세"
+     ]
+    },
+    {
+     "key": "contract_start_date",
+     "label": "임대차 시작일",
+     "kind": "date",
+     "q": "임차주택을 임차인에게 인도하는 날짜(임대차기간의 시작)를 YYYY-MM-DD 형식으로 적으세요.",
+     "hint": "(제2조 첫 문장 '…년 …월 …일까지 임차인에게 인도하고' 부분)",
+     "aliases": [
+      "상태로"
+     ]
+    },
+    {
+     "key": "contract_end_date",
+     "label": "임대차 종료일",
+     "kind": "date",
+     "q": "임대차기간이 끝나는 날짜를 YYYY-MM-DD 형식으로 적으세요.",
+     "hint": "(제2조 둘째 줄 '임대차기간은 인도일로부터 …년 …월 …일까지로 한다' 부분)",
+     "aliases": [
+      "인도일로부터"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "type": "differ",
+     "keys": [
+      "lessor_name",
+      "lessee_name"
+     ],
+     "why": "임대인=임차인"
+    }
+   ]
+  },
+  {
+   "id": "ledger",
+   "name": "건축물대장",
+   "words": [
+    "건축물대장"
+   ],
+   "fields": [
+    {
+     "key": "bldg_address",
+     "label": "대지위치",
+     "kind": "text",
+     "q": "이 건축물대장의 대지위치를 적으세요. 지번과 도로명주소는 빼고 대지위치 칸의 값만 적으세요.",
+     "hint": "(위쪽 표의 '대지위치' 칸)",
+     "aliases": [
+      "대지위치"
+     ]
+    },
+    {
+     "key": "bldg_owner",
+     "label": "소유자",
+     "kind": "owners",
+     "q": "소유자현황 표에 적힌 소유자를 모두 적으세요. 한 명이면 성명(명칭)만, 여러 명(공유)이면 '성명(지분), 성명(지분)' 형식으로 적으세요(예: 홍길동(1/2), 김민지(1/2)). 주소·주민등록번호는 빼세요.",
+     "hint": "('소유자현황' 표의 '성명(명칭)' 칸과 '소유권 지분' 칸)"
+    },
+    {
+     "key": "bldg_owner_date",
+     "label": "소유권 변동일",
+     "kind": "date",
+     "q": "소유자현황 표의 변동일자를 YYYY-MM-DD 형식으로 적으세요. 여러 명이면 가장 최근 날짜입니다. 발급일·가격 기준일이 아닙니다.",
+     "hint": "('소유자현황' 표의 '변동일자' 칸)",
+     "latest_near": "소유권"
+    },
+    {
+     "key": "bldg_main_use",
+     "label": "주 용도",
+     "kind": "text",
+     "q": "전유부분 중 '주' 구분 행의 용도만 적으세요(예: 아파트). 공용부분의 용도가 아닙니다.",
+     "hint": "('전유부분' 표의 '주' 행 '용도' 칸)"
+    },
+    {
+     "key": "bldg_area",
+     "label": "전용면적(㎡)",
+     "kind": "number",
+     "q": "전유부분 중 '주' 구분 행의 면적(㎡)을 숫자만 적으세요(예: 84.97). 공용부분 면적이 아닙니다.",
+     "hint": "('전유부분' 표의 '주' 행 '면적(㎡)' 칸)",
+     "above_word": "공용부분"
+    },
+    {
+     "key": "bldg_violation",
+     "label": "위반건축물",
+     "kind": "flag",
+     "q": "이 건축물대장에 '위반건축물' 표시가 있으면 '있음', 없으면 '없음'만 적으세요.",
+     "hint": "(문서 오른쪽 위 표시)",
+     "flag_word": "위반건축물"
+    }
+   ],
+   "rules": []
+  },
+  {
+   "id": "registry",
+   "name": "등기사항전부증명서",
+   "words": [
+    "등기사항",
+    "갑구",
+    "을구"
+   ],
+   "fields": [
+    {
+     "key": "property_address",
+     "label": "소재지",
+     "kind": "text",
+     "q": "이 등기사항증명서의 부동산 소재지 주소를 적으세요. '[집합건물]' 같은 표기는 빼고 주소만 적으세요.",
+     "hint": "(문서 맨 위 '[집합건물]' 뒤에 적힌 줄)"
+    },
+    {
+     "key": "owner_name",
+     "label": "소유자",
+     "kind": "name",
+     "q": "현재(가장 최근에 등기된) 소유자의 이름만 적으세요. 이전 소유자나 주소는 제외합니다.",
+     "hint": "(갑구 표의 가장 아래 행, '권리자 및 기타사항' 칸에서 '소유자' 다음에 적힌 이름)",
+     "aliases": [
+      "소유자"
+     ],
+     "page_words": [
+      "갑구",
+      "소유자"
+     ],
+     "last_row": "소유자"
+    },
+    {
+     "key": "ownership_change_date",
+     "label": "소유권 접수일",
+     "kind": "date",
+     "q": "현재 소유자의 소유권이 접수된 날짜를 YYYY-MM-DD 형식으로 적으세요. 등기원인(매매 등)의 날짜가 아니라 접수일입니다.",
+     "hint": "(갑구 표의 가장 아래 소유권 행, '접수' 칸 첫 줄)",
+     "page_words": [
+      "갑구",
+      "소유자"
+     ],
+     "last_row": "소유자",
+     "first_date": true
+    },
+    {
+     "key": "seizure_flag",
+     "label": "압류·가압류",
+     "kind": "flag",
+     "q": "압류 또는 가압류 등기가 하나라도 있으면 '있음', 없으면 '없음'만 적으세요.",
+     "hint": "(갑구 표의 '등기목적' 칸에 '압류' 또는 '가압류'가 적힌 행)",
+     "page_words": [
+      "갑구"
+     ],
+     "flag_word": "압류"
+    },
+    {
+     "key": "mortgage_amount",
+     "label": "채권최고액",
+     "kind": "amount",
+     "q": "근저당권의 채권최고액을 쉼표 포함 숫자로만 적으세요(예: 120,000,000). 근저당 기록이 없으면 '없음'.",
+     "hint": "(을구 표 '권리자 및 기타사항' 칸의 '채권최고액 금' 뒤)",
+     "aliases": [
+      "채권최고액"
+     ],
+     "page_words": [
+      "을구",
+      "근저당"
+     ],
+     "empty_ok": [
+      "채권최고액"
+     ]
+    },
+    {
+     "key": "mortgage_holder",
+     "label": "근저당권자",
+     "kind": "text",
+     "q": "근저당권자(은행·회사) 이름만 적으세요. 채무자 이름이 아닙니다. 근저당 기록이 없으면 '없음'.",
+     "hint": "(을구 표의 '근저당권자' 뒤)",
+     "aliases": [
+      "근저당권자"
+     ],
+     "page_words": [
+      "을구",
+      "근저당"
+     ],
+     "empty_ok": [
+      "채권최고액"
+     ],
+     "zoom": "name"
+    }
+   ],
+   "rules": [
+    {
+     "type": "differ",
+     "keys": [
+      "owner_name",
+      "mortgage_holder"
+     ],
+     "why": "소유자=근저당권자"
+    }
+   ],
+   "answer_words": [
+    "등기부"
+   ]
+  },
+  {
+   "id": "sale",
+   "name": "매매계약서",
+   "words": [
+    "매매계약서",
+    "매도인"
+   ],
+   "fields": [
+    {
+     "key": "seller_name",
+     "label": "매도인",
+     "kind": "name",
+     "q": "이 매매계약서의 매도인 이름만 적으세요. 매수인 이름이 아닙니다.",
+     "hint": "(아래쪽 서명란 '매도인' 블록의 '성명' 칸)",
+     "aliases": [
+      "성명"
+     ],
+     "role_order": 0
+    },
+    {
+     "key": "buyer_name",
+     "label": "매수인",
+     "kind": "name",
+     "q": "이 매매계약서의 매수인 이름만 적으세요. 매도인 이름이 아닙니다.",
+     "hint": "(아래쪽 서명란 '매수인' 블록의 '성명' 칸)",
+     "aliases": [
+      "성명"
+     ],
+     "role_order": 1
+    },
+    {
+     "key": "sale_price",
+     "label": "매매대금",
+     "kind": "amount",
+     "q": "매매대금 금액을 쉼표 포함 숫자로만 적으세요(예: 450,000,000). 계약금이 아닙니다.",
+     "hint": "('매매대금' 줄, '원정(₩' 뒤)",
+     "aliases": [
+      "매매대금"
+     ]
+    },
+    {
+     "key": "down_payment",
+     "label": "계약금",
+     "kind": "amount",
+     "q": "계약금 금액을 쉼표 포함 숫자로만 적으세요(예: 45,000,000). 매매대금 전체가 아닙니다.",
+     "hint": "('계약금' 줄에 숫자로 적힌 금액)",
+     "aliases": [
+      "계약금"
+     ]
+    },
+    {
+     "key": "balance_due_date",
+     "label": "잔금일",
+     "kind": "date",
+     "q": "잔금을 지불하는 날짜를 YYYY-MM-DD 형식으로 적으세요.",
+     "hint": "('잔금' 줄의 '…년 …월 …일에 지불한다' 부분)",
+     "aliases": [
+      "잔금"
+     ],
+     "last_payment": "지불"
+    },
+    {
+     "key": "handover_date",
+     "label": "인도일",
+     "kind": "date",
+     "q": "부동산 인도일을 YYYY-MM-DD 형식으로 적으세요.",
+     "hint": "(제2조 '위 부동산의 인도일은' 뒤)",
+     "aliases": [
+      "인도일은"
+     ]
+    }
+   ],
+   "rules": [
+    {
+     "type": "less",
+     "a": "down_payment",
+     "b": "sale_price",
+     "why": "계약금이 매매대금 이상"
+    },
+    {
+     "type": "differ",
+     "keys": [
+      "seller_name",
+      "buyer_name"
+     ],
+     "why": "매도인=매수인"
+    },
+    {
+     "type": "order",
+     "a": "seller_name",
+     "b": "buyer_name",
+     "why": "서명란 순서(매도인이 위) 어긋남"
+    }
+   ]
+  },
+  {
+   "id": "cert",
+   "name": "자격증·수료증·성적증명서",
+   "words": [
+    "자격증",
+    "수료증",
+    "합격증",
+    "성적증명",
+    "인증서",
+    "certificate",
+    "certify",
+    "scorereport",
+    "testreport",
+    "transcript",
+    "diploma"
+   ],
+   "fields": [
+    {
+     "key": "cert_kind",
+     "label": "증명서 종류",
+     "kind": "choice",
+     "q": "이 문서가 자격증(합격증·인정서 포함), 수료증, 성적증명서(점수 보고서) 중 무엇인지 그 이름 하나만 적으세요. 셋 다 아니면 '기타'.",
+     "choices": [
+      {
+       "value": "수료증",
+       "words": [
+        "수료",
+        "completion"
+       ]
+      },
+      {
+       "value": "성적증명서",
+       "words": [
+        "성적",
+        "score",
+        "report",
+        "transcript"
+       ]
+      },
+      {
+       "value": "자격증",
+       "words": [
+        "자격",
+        "합격",
+        "인정",
+        "certificate"
+       ]
+      },
+      {
+       "value": "기타",
+       "words": [
+        "기타"
+       ]
+      }
+     ]
+    },
+    {
+     "key": "cert_holder",
+     "label": "이름",
+     "kind": "person",
+     "q": "이 증명서를 받은 사람(취득자·수험자·수료자)의 이름을 문서에 적힌 글자 그대로 적으세요. 번역하거나 로마자로 바꾸지 마세요. 발급기관장·서명자 이름이 아닙니다.",
+     "need_on_page": true,
+     "zoom": "name"
+    },
+    {
+     "key": "cert_title",
+     "label": "자격·시험·과정",
+     "kind": "person",
+     "q": "자격·시험·과정의 이름을 문서에 적힌 그대로 적으세요(예: 정보처리기사, TOEIC). 문서 제목('자격증', 'Certificate')만 적지 마세요.",
+     "need_on_page": true
+    },
+    {
+     "key": "cert_grade",
+     "label": "등급·점수",
+     "kind": "grade",
+     "q": "이 증명서의 등급 또는 점수 값 하나만 짧게 적으세요(예: 1급, 850, 6.5). 다른 글자는 적지 마세요. 등급·점수가 없으면 '없음'.",
+     "empty_ok": [
+      "등급",
+      "점수",
+      "급수",
+      "Score",
+      "Band",
+      "Grade",
+      "Level",
+      "Result"
+     ],
+     "need_on_page": true,
+     "zoom": "number"
+    },
+    {
+     "key": "cert_issuer",
+     "label": "발급기관",
+     "kind": "person",
+     "q": "이 증명서를 발급한 기관 이름을 문서에 적힌 그대로 적으세요.",
+     "need_on_page": true,
+     "zoom": "name"
+    },
+    {
+     "key": "cert_date",
+     "label": "취득일",
+     "kind": "date",
+     "q": "자격을 취득(합격·수료)한 날짜를 YYYY-MM-DD 형식으로 적으세요. 성적표는 시험일입니다. 생년월일·발급일이 아닙니다(그 날짜가 없을 때만 발급일).",
+     "need_on_page": true,
+     "zoom": "number",
+     "decoy_words": [
+      "생년월일",
+      "발급일",
+      "dateofbirth",
+      "birth",
+      "dateofissue",
+      "issued"
+     ]
+    },
+    {
+     "key": "cert_no",
+     "label": "증명서 번호",
+     "kind": "text",
+     "q": "증명서 번호(자격번호·인정번호·등록번호)를 문서에 적힌 그대로 적으세요. 없으면 '없음'.",
+     "empty_ok": [
+      "번호",
+      "No.",
+      "Number"
+     ],
+     "need_on_page": true,
+     "zoom": "number",
+     "id": true
+    },
+    {
+     "key": "cert_lang",
+     "label": "문서 언어",
+     "kind": "text",
+     "computed": "lang"
+    }
+   ],
+   "rules": [
+    {
+     "type": "score_range",
+     "a": "cert_grade",
+     "title": "cert_title",
+     "ranges": [
+      {
+       "word": "toeic",
+       "min": 10,
+       "max": 990,
+       "step": 5,
+       "why": "TOEIC 점수는 10~990, 5점 단위"
+      },
+      {
+       "word": "ielts",
+       "min": 0,
+       "max": 9,
+       "step": 0.5,
+       "why": "IELTS 밴드는 0~9, 0.5 단위"
+      },
+      {
+       "word": "topik",
+       "min": 1,
+       "max": 6,
+       "step": 1,
+       "why": "TOPIK 등급은 1~6급"
+      },
+      {
+       "word": "컴퓨터활용능력",
+       "min": 1,
+       "max": 2,
+       "step": 1,
+       "why": "컴퓨터활용능력은 1·2급"
+      }
+     ]
+    },
+    {
+     "type": "differ",
+     "keys": [
+      "cert_holder",
+      "cert_title",
+      "cert_issuer"
+     ],
+     "why": "두 칸의 값이 같음(다른 칸 값을 옮겨 쓴 것일 수 있음)"
+    },
+    {
+     "type": "not_future",
+     "a": "cert_date",
+     "why": "취득일이 오늘보다 뒤"
+    }
+   ],
+   "from_text": false
+  }
+ ]
+}

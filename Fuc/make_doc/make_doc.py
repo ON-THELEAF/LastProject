@@ -30,6 +30,12 @@ def safe_name(name, n):
     return name or f"문서{n}"
 
 
+def computed_values(dtype):
+    """만드는 문서에 엔진이 채우는 칸(양식에서 computed: lang → 한국어)."""
+    form = builtin_forms().get(dtype) or {"fields": {}}
+    return {k: LANG_LABEL["ko"] for k, s in form["fields"].items() if s.get("computed") == "lang"}
+
+
 def resolve_type(s):
     """'매매계약서'·'sale' 같은 문서 종류 표기 → 엔진의 문서 종류 키. 모르면 None."""
     s = (s or "").strip()
@@ -289,8 +295,7 @@ def prepare_docs(recs, template=None):
         if problems:
             doc["problems"], doc["values"] = problems, {k: str(x) for k, x in rec["values"].items()}
             continue
-        if rec["doc_type"] == "cert":
-            values["cert_lang"] = LANG_LABEL["ko"]
+        values.update(computed_values(rec["doc_type"]))
         if not template:
             doc["problems"].append("워드 양식(.docx)을 고르세요")
             continue
@@ -311,7 +316,7 @@ def text_record(text, ask, dtype=None, name="문서", types=None):
     text = (text or "").strip()[:TEXT_LIMIT]
     if not text:
         raise ValueError("글이 비어 있어요")
-    types = types or [t for t in DOC_FIELDS if t != "cert"]
+    types = types or [t for t, f in builtin_forms().items() if f.get("from_text", True)]
     if not dtype:
         dtype, _ = resolve_ai_type(ask(FREE_TYPE_Q.format(names=", ".join(DOC_TYPE_LABEL[t] for t in types), text=text)))
         if dtype not in types:
@@ -342,8 +347,7 @@ def apply_edits(docs, posted):
             continue
         vals = {k: str(x) for k, x in (p.get("values") or {}).items() if k in known}
         values, problems = check_record({"name": d["name"], "doc_type": d["doc_type"], "values": vals, "unknown": []})
-        if d["doc_type"] == "cert":
-            values["cert_lang"] = LANG_LABEL["ko"]
+        values.update(computed_values(d["doc_type"]))
         if not d["template"]:      # 다시 검사해도 워드 양식 없이는 만들지 않는다
             problems.append("워드 양식(.docx)을 고르세요")
         out.append({**d, "values": values, "problems": problems})
@@ -530,5 +534,6 @@ def main_make():
 
 # 함수 안에서만 쓰는 다른 기능의 이름: 맨 아래에서 불러온다(서로 부르는 기능끼리 순환해도 됨)
 from Fuc.hallucination_check.hallucination_check import format_ok, squash  # noqa: E402,F401
+from DB.forms import builtin_forms  # noqa: E402,F401
 from Fuc.read_pipeline.read_pipeline import COMPUTED, DOC_FIELDS, DOC_TYPE_LABEL, FIELD_LABEL, LANG_LABEL, parse_joint, resolve_ai_type  # noqa: E402,F401
 from Fuc.scoring.scoring import clean  # noqa: E402,F401

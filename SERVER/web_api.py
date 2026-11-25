@@ -116,8 +116,8 @@ class Api:
     def save_doc(self, doc: dict) -> None:
         self.svc.save_doc(doc)
 
-    def save_custom_type(self, name: str, labels: list[str]) -> dict:
-        return self.svc.save_custom_type(name, labels)
+    def save_custom_type(self, name: str, labels: list[str], kinds: dict | None = None) -> dict:
+        return self.svc.save_custom_type(name, labels, kinds)
 
     def open_json_folder(self, docs: list[dict]) -> str:
         folders = self.svc.json_folders(docs) or [str(self.svc.default_out_dir())]

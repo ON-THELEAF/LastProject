@@ -1,6 +1,8 @@
 """채점: 답변 후처리와 정답 비교(A·B 경로 공용)  (bridgedocs.py에서 나눔)"""
 import re
 
+from DB.forms import all_builtin_specs
+
 
 # ============================================================================
 # 채점: 답변 후처리와 정답 비교(A·B 공용)  (이전: scoring.py)
@@ -43,10 +45,11 @@ def owners_text(pairs):
 
 
 GRADE_DROP = re.compile(r"topik|level|band|score|급|점|\s|[()（）]", re.I)
-CHOICES = ("자격증", "수료증", "성적증명서", "기타")
-# 증명서 종류 낱말(소문자). 앞에 있는 종류가 우선: 성적표에도 '합격'·'certificate'가, 수료증에도 '인정'이 나온다
-CHOICE_WORDS = ((("수료", "completion"), "수료증"), (("성적", "score", "report", "transcript"), "성적증명서"),
-                (("자격", "합격", "인정", "certificate"), "자격증"))
+# 고르기 칸(choice)의 값과 낱말은 양식에 있다(기본 양식의 '증명서 종류' 칸). 앞에 있는 값이 우선:
+# 성적표에도 '합격'·'certificate'가, 수료증에도 '인정'이 나온다
+_CHOICE_SPEC = [c for s in all_builtin_specs().values() if s["kind"] == "choice" for c in s.get("choices", [])]
+CHOICES = tuple(dict.fromkeys(c["value"] for c in _CHOICE_SPEC))
+CHOICE_WORDS = tuple((tuple(c["words"]), c["value"]) for c in _CHOICE_SPEC if c["value"] != "기타")
 
 
 SEAL_TAIL = re.compile(r"\s*[\[(（]([^\[\]()（）]{0,2})[\])）]?\s*$")

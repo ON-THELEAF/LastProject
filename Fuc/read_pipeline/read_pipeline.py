@@ -17,46 +17,27 @@ from PIL import Image  # noqa: E402
 # ============================================================================
 # 실행: python bridgedocs.py run <파일...> [--out 결과.json] [--deskew]
 #   파일: PDF(여러 쪽 가능) 또는 쪽 이미지(png/jpg) 여러 장. 한 번에 문서 하나.
-# 흐름: 쪽 이미지 → (선택) 기울기 보정 → 페이지 OCR → 문서 종류 판별 → B경로(OCR 줄 + 주소·이름 두 번째 판독)
+# 흐름: 쪽 이미지 → (선택) 기울기 보정 → 페이지 OCR → 문서 종류 판별(핵심 단어 먼저, 안 되면 AI) → B경로(OCR 줄 + OCR 없이 다시 읽기 + 이름·숫자 칸 확대 재판독)
 #       → 규칙 검사(크롭 재질문 없음: 오탐만 늘어서 2026-10-24에 뺌) → JSON
 
-DOC_FIELDS = {   # 문서 종류별 칸과 종류(kind). 정답 파일 없이도 엔진이 무엇을 물을지 안다
-    "registry": {"property_address": "text", "owner_name": "name", "ownership_change_date": "date", "seizure_flag": "flag",
-                 "mortgage_amount": "amount", "mortgage_holder": "text"},
-    "lease": {"lessor_name": "name", "lessee_name": "name", "deposit_amount": "amount", "monthly_rent": "amount",
-              "contract_start_date": "date", "contract_end_date": "date"},
-    "sale": {"seller_name": "name", "buyer_name": "name", "sale_price": "amount", "down_payment": "amount",
-             "balance_due_date": "date", "handover_date": "date"},
-    "ledger": {"bldg_address": "text", "bldg_owner": "owners", "bldg_owner_date": "date", "bldg_main_use": "text",
-               "bldg_area": "number", "bldg_violation": "flag"},
-    "store_lease": {"st_lessor": "name", "st_lessee": "name", "st_deposit": "amount", "st_rent": "amount", "st_mgmt_fee": "amount",
-                    "st_start": "date", "st_end": "date"},
-    "cert": {"cert_kind": "choice", "cert_holder": "person", "cert_title": "person", "cert_grade": "grade", "cert_issuer": "person",
-             "cert_date": "date", "cert_no": "text", "cert_lang": "text"},
-}
-COMPUTED = {"cert_lang"}     # 모델에 묻지 않고 엔진이 정하는 칸(문서 언어)
+# 문서 양식(종류·칸·질문·검사 규칙)은 코드에 두지 않는다: DB/기본 양식.json(기본) + 새 문서 종류.json(사용자). 아래는 그 파일에서 만든 표
+from DB.forms import all_builtin_specs, builtin_forms, custom_form, joint_item, label_order, question  # noqa: E402
+
+_FORMS = builtin_forms()
+DOC_FIELDS = {t: {k: s["kind"] for k, s in f["fields"].items()} for t, f in _FORMS.items()}   # 기본 양식의 칸과 종류(kind)
+COMPUTED = {k for k, s in all_builtin_specs().items() if s.get("computed")}     # 모델에 묻지 않고 엔진이 정하는 칸(문서 언어)
 LANG_LABEL = {"ko": "한국어", "en": "영어"}
 LANG_CODE = {v: k for k, v in LANG_LABEL.items()}
-FIELD_LABEL = {
-    "property_address": "소재지", "owner_name": "소유자", "ownership_change_date": "소유권 접수일", "seizure_flag": "압류·가압류",
-    "mortgage_amount": "채권최고액", "mortgage_holder": "근저당권자",
-    "lessor_name": "임대인", "lessee_name": "임차인", "deposit_amount": "보증금", "monthly_rent": "차임(월세)",
-    "contract_start_date": "임대차 시작일", "contract_end_date": "임대차 종료일",
-    "seller_name": "매도인", "buyer_name": "매수인", "sale_price": "매매대금", "down_payment": "계약금",
-    "balance_due_date": "잔금일", "handover_date": "인도일",
-    "bldg_address": "대지위치", "bldg_owner": "소유자", "bldg_owner_date": "소유권 변동일", "bldg_main_use": "주 용도",
-    "bldg_area": "전용면적(㎡)", "bldg_violation": "위반건축물",
-    "st_lessor": "임대인", "st_lessee": "임차인", "st_deposit": "보증금", "st_rent": "차임(월세)", "st_mgmt_fee": "관리비",
-    "st_start": "임대차 시작일", "st_end": "임대차 종료일",
-    "cert_kind": "증명서 종류", "cert_holder": "이름", "cert_title": "자격·시험·과정", "cert_grade": "등급·점수", "cert_issuer": "발급기관",
-    "cert_date": "취득일", "cert_no": "증명서 번호", "cert_lang": "문서 언어",
-}
-DOC_TYPE_WORDS = [("store_lease", ["상가건물임대차"]), ("lease", ["주택임대차"]), ("ledger", ["건축물대장"]),
-                  ("registry", ["등기사항", "갑구", "을구"]), ("sale", ["매매계약서", "매도인"]),
-                  ("cert", ["자격증", "수료증", "합격증", "성적증명", "인증서", "certificate", "certify", "scorereport", "testreport",
-                            "transcript", "diploma"])]
-FIELD_PAGE_WORDS = {"owner_name": ["갑구", "소유자"], "ownership_change_date": ["갑구", "소유자"], "seizure_flag": ["갑구"],
-                    "mortgage_amount": ["을구", "근저당"], "mortgage_holder": ["을구", "근저당"]}
+FIELD_LABEL = {k: s["label"] for k, s in all_builtin_specs().items()}
+DOC_TYPE_WORDS = [(t, f["words"]) for t, f in _FORMS.items()]       # 앞이 우선(상가건물임대차를 주택임대차보다 먼저)
+FIELD_PAGE_WORDS = {k: s["page_words"] for k, s in all_builtin_specs().items() if s.get("page_words")}
+
+
+def form_of(doc_type, custom_name=None):
+    """문서 종류 → 양식(기본 양식이면 그 양식, 사용자 양식이면 저장해 둔 칸과 종류). 없으면 None."""
+    if doc_type in _FORMS:
+        return _FORMS[doc_type]
+    return custom_forms().get(custom_name) if doc_type == "custom" and custom_name else None
 
 
 def detect_doc_type(page_lines_list):
@@ -67,9 +48,9 @@ def detect_doc_type(page_lines_list):
     return None
 
 
-def _field_page(key, page_lines_list):
+def _field_page(spec, page_lines_list):
     for i, lines in enumerate(page_lines_list):
-        if any(w in squash(" ".join(L["text"] for L in lines)) for w in FIELD_PAGE_WORDS.get(key, [])):
+        if any(w in squash(" ".join(L["text"] for L in lines)) for w in spec.get("page_words", [])):
             return i
     return 0
 
@@ -134,9 +115,9 @@ JOINT_PRE = ("이것은 문서 이미지에 인쇄·기재된 글자를 그대�
              "문서에 없거나 읽을 수 없으면 값을 '없음'으로 쓰세요.\n")
 
 
-def joint_question(doc_type, keys):
+def joint_question(fm, keys):
     """칸 여러 개를 한 번에 묻는 질문(칸마다 같은 설명·위치 힌트)."""
-    items = "\n".join(f'- "{k}": {V2Q[doc_type][k]} {HINT.get(k, "")}'.rstrip() for k in keys)
+    items = "\n".join(f'- "{k}": {joint_item(fm["fields"][k])}' for k in keys)
     return JOINT_PRE + items
 
 
@@ -155,12 +136,12 @@ def parse_joint(ans, keys):
             for k, v in data.items() if k in keys and v is not None}
 
 
-def joint_answers(model, proc, doc_type, keys_by_page, pages, lines_list, is_docx, check):
+def joint_answers(model, proc, fm, keys_by_page, pages, lines_list, is_docx, check):
     """문서를 두 번만 읽는다(쪽마다): 1차 = 사진 + OCR 줄, 2차 = 사진만. 1차 JSON에 빠진 칸만 칸마다 따로 묻는다.
     -> {칸: {"ans", "ans2"(없으면 None), "strict2": True}}"""
     out = {}
     for pi, keys in keys_by_page.items():
-        q = joint_question(doc_type, keys)
+        q = joint_question(fm, keys)
         budget = 40 * len(keys) + 40
         check()
         if is_docx:
@@ -173,7 +154,7 @@ def joint_answers(model, proc, doc_type, keys_by_page, pages, lines_list, is_doc
         for k in keys:
             if k not in first:     # JSON이 깨졌거나 칸이 빠짐: 그 칸만 예전처럼 따로 묻는다
                 check()
-                one = PROMPTS["v3"][doc_type][k]
+                one = question(fm["fields"][k])
                 first[k] = (ask_text(model, proc, docx_body(lines_list[0]) + "\n\n" + text_question(one)) if is_docx
                             else ask(model, proc, pages[pi], with_ocr(one, lines_list[pi]), max_new=64)[0])
             out[k] = {"ans": first[k], "ans2": second.get(k), "strict2": True, "norm_c": False}
@@ -200,7 +181,7 @@ def resolve_ai_type(ans):
     sq = squash(a)      # AI가 띄어쓰기만 다르게 답해도 알려진 종류로
     t = resolve_type(a) or next((k for k, lab in DOC_TYPE_LABEL.items()
                                  if any(x and squash(x) in sq for x in [lab, *lab.split("·")])), None)
-    t = t or next((d for d, words in DOC_TYPE_WORDS + [("registry", ["등기부"])] if any(w in sq.casefold() for w in words)), None)
+    t = t or next((d for d, words in DOC_TYPE_WORDS + [(d, f["answer_words"]) for d, f in _FORMS.items() if f.get("answer_words")] if any(w in sq.casefold() for w in words)), None)
     if t:
         return t, None
     return "custom", a
@@ -296,60 +277,75 @@ def process_document(paths, model, proc, ocr, deskew=False, stop=None, mode="fie
     is_docx = routes == ["docx"]
     base = {"source": [Path(p).name for p in paths], "files": [str(Path(p).resolve()) for p in paths], "deskew": deskew,
             "route": routes, "pages": len(lines_list)}
-    doc_type, custom_name = resolve_ai_type(ask_doc_type(model, proc, pages, lines_list, is_docx))
-    check()
+    # 종합설계 요약 2번: OCR 글자의 핵심 단어로 먼저 판별하고, 못 하면 AI에게 묻는다(사용자가 등록한 종류도 여기서)
+    doc_type, custom_name = detect_doc_type(lines_list), None
     if doc_type is None:
-        doc_type = detect_doc_type(lines_list)
-    if want:
-        out, _ = custom_fields(model, proc, custom_name, pages, lines_list, is_docx, check, labels=want)
+        doc_type, custom_name = resolve_ai_type(ask_doc_type(model, proc, pages, lines_list, is_docx))
+        check()
+    if want:      # 사용자가 읽기 전에 고른 칸: 칸 이름으로 종류를 짐작해 기본 양식과 같은 검사를 받는다
+        name = DOC_TYPE_LABEL.get(doc_type) or custom_name or "고른 칸"
+        out = read_fields(custom_form(name, want), model, proc, pages, lines_list, is_docx, check)
         n_rev = sum(o["status"] == "review" for o in out)
-        return {**base, "doc_type": doc_type if doc_type in DOC_TYPE_LABEL else "custom",
-                "doc_name": DOC_TYPE_LABEL.get(doc_type) or custom_name or "고른 칸", "new_type": False, "fields": out,
-                "summary": {"auto": len(out) - n_rev, "review": n_rev}}
-    if doc_type == "custom":
+        return {**base, "doc_type": doc_type if doc_type in DOC_TYPE_LABEL else "custom", "doc_name": name, "new_type": False,
+                "fields": out, "summary": {"auto": len(out) - n_rev, "review": n_rev}}
+    if doc_type is None:
+        return {**base, "doc_type": None, "fields": [], "summary": {"auto": 0, "review": 0},
+                "error": "문서 종류를 알 수 없음(AI도 정해 둔 단어로도 판단하지 못함)"}
+    fm = form_of(doc_type, custom_name)
+    if fm is None:      # 처음 보는 종류: AI가 칸을 골라 읽고 모두 사용자 확인
         out, new = custom_fields(model, proc, custom_name, pages, lines_list, is_docx, check)
         n_rev = sum(o["status"] == "review" for o in out)
         return {**base, "doc_type": "custom", "doc_name": custom_name, "new_type": new, "fields": out,
                 "summary": {"auto": len(out) - n_rev, "review": n_rev}}
-    if doc_type is None:
-        return {**base, "doc_type": None, "fields": [], "summary": {"auto": 0, "review": 0},
-                "error": "문서 종류를 알 수 없음(AI도 정해 둔 단어로도 판단하지 못함)"}
+    out = read_fields(fm, model, proc, pages, lines_list, is_docx, check, mode)
+    n_rev = sum(o["status"] == "review" for o in out)
+    return {**base, "doc_type": doc_type, "doc_name": fm["name"], "new_type": False, "fields": out,
+            "summary": {"auto": len(out) - n_rev, "review": n_rev}}
+
+
+def read_fields(fm, model, proc, pages, lines_list, is_docx, check, mode="field"):
+    """양식(기본·사용자 구분 없음)의 칸을 읽고 환각검증을 거친 칸 목록.
+    mode: 'field' = 칸마다 묻기(+모든 칸 OCR 없이 다시 읽기, 이름·숫자 칸 확대 재판독) | 'joint' = 쪽마다 두 번만 묻기."""
     names = [f"p{i + 1}" for i in range(len(lines_list))]
     cache = dict(zip(names, lines_list))
+    specs = fm["fields"]
     fields, answers = {}, {}
     if mode == "joint":
         by_page = {}
-        for key in DOC_FIELDS[doc_type]:
-            if key not in COMPUTED:
-                by_page.setdefault(_field_page(key, lines_list), []).append(key)
-        got = joint_answers(model, proc, doc_type, by_page, pages, lines_list, is_docx, check)
+        for key, sp in specs.items():
+            if not sp.get("computed"):
+                by_page.setdefault(_field_page(sp, lines_list), []).append(key)
+        got = joint_answers(model, proc, fm, by_page, pages, lines_list, is_docx, check)
         page_of = {k: pi for pi, keys in by_page.items() for k in keys}
         for key in got:
             answers[("doc", key)] = got[key]
-        for key, kind in DOC_FIELDS[doc_type].items():     # 칸 순서는 문서 종류의 순서대로
+        for key, sp in specs.items():     # 칸 순서는 양식의 순서대로
             if key in page_of:
-                fields[key] = {"value": "", "kind": kind, "page": page_of[key] + 1, "region": None, "b_skip": False}
-    for key, kind in DOC_FIELDS[doc_type].items():
-        if key in COMPUTED or mode == "joint":
+                fields[key] = {"value": "", "kind": sp["kind"], "page": page_of[key] + 1, "region": None, "b_skip": False, "spec": sp}
+    for key, sp in specs.items():
+        if sp.get("computed") or mode == "joint":
             continue
+        kind = sp["kind"]
         check()
-        pi = _field_page(key, lines_list)
-        q = PROMPTS["v3"][doc_type][key]
+        pi = _field_page(sp, lines_list)
+        q = question(sp)
         if is_docx:     # 쪽 이미지가 없으니 글자만 묻는다. 두 번째 판독(OCR 없이 이미지로 다시 묻기)은 할 수 없다
             row = {"ans": ask_text(model, proc, docx_body(lines_list[0]) + "\n\n" + text_question(q)), "norm_c": False}
         else:
             row = {"ans": ask(model, proc, pages[pi], with_ocr(q, lines_list[pi]), max_new=64)[0], "norm_c": False}
-            # 이름은 다시 읽지 않는다: 페이지 대조에서 걸리면 바로 사용자 판별(2026-10-26 결정)
+            # 종합설계 요약 3번 ② 모든 칸을 OCR 없이 다시 읽기, ③ 이름·기관명(과 숫자 칸)은 그 영역을 확대해 다시 읽기
+            v = clean(kind, row["ans"])
             try:
-                if key in ZOOM_NUMBER and clean(kind, row["ans"]) not in ("", "없음"):
-                    row["ans2"] = zoom_number(model, proc, pages[pi], lines_list[pi], key, clean(kind, row["ans"]))
-                elif key in SECOND_READ_ANY:
-                    row["ans2"] = ask(model, proc, pages[pi], q, max_new=64)[0]
+                row["ans2"] = ask(model, proc, pages[pi], q, max_new=64)[0]
+                if v not in ("", "없음") and sp.get("zoom") == "number":
+                    row["zoom"] = zoom_number(model, proc, pages[pi], lines_list[pi], sp, v)
+                elif v not in ("", "없음") and zooms_name(sp):
+                    row["zoom"] = zoom_name(model, proc, pages[pi], lines_list[pi], kind, v)
             except Exception:   # 두 번째 판독 실패: 그 칸은 사용자 확인
                 row["second_failed"] = True
         answers[("doc", key)] = row
-        fields[key] = {"value": "", "kind": kind, "page": pi + 1, "region": None, "b_skip": False}
-    gt = {"doc": {"doc_type": doc_type, "pages": names, "fields": fields}}
+        fields[key] = {"value": "", "kind": kind, "page": pi + 1, "region": None, "b_skip": False, "spec": sp}
+    gt = {"doc": {"doc_type": fm["id"], "rules": fm["rules"], "pages": names, "fields": fields}}
     chk = compute_checks(gt, ["doc"], answers, cache)
     out = []
     for key, f in fields.items():
@@ -363,18 +359,16 @@ def process_document(paths, model, proc, ocr, deskew=False, stop=None, mode="fie
         # 두 번째 판독이 다른 칸 값(이름 자리에 주소 등)을 답하면 후보 버튼에 넣지 않는다
         second = clean(f["kind"], ans2) if ans2 else ""
         cands = list(dict.fromkeys(v for v in (c["value"], second if format_ok(f["kind"], second) else "", c.get("suggest") or "") if v)) if review else []
-        out.append({"key": key, "label": FIELD_LABEL.get(key, key), "kind": f["kind"], "value": c["value"],
+        out.append({"key": key, "label": f["spec"]["label"], "kind": f["kind"], "value": c["value"],
                     "status": "review" if review else "auto",
                     "reason": (c["reason"] or ("두 번째 판독 실패 — 확인하세요" if failed else "")) if review else "",
                     "candidates": cands, "page": f["page"], "line_box": box,
                     # 확인 화면에 보여 줄 비교 값 하나(2026-10-28 결정): 읽은 값과 다른 첫 후보
                     "compare": next((x for x in cands if x != c["value"]), "")})
-    if "cert_lang" in DOC_FIELDS[doc_type]:
-        lang = lang_field(lines_list)
-        out.append(lang)
-    n_rev = sum(o["status"] == "review" for o in out)
-    return {**base, "doc_type": doc_type, "doc_name": DOC_TYPE_LABEL[doc_type], "new_type": False, "fields": out,
-            "summary": {"auto": len(out) - n_rev, "review": n_rev}}
+    for key, sp in specs.items():
+        if sp.get("computed") == "lang":
+            out.append(lang_field(lines_list, key, sp["label"]))
+    return out
 
 
 def group_documents(files):
@@ -431,19 +425,18 @@ def main_run():
         webbrowser.open(page.resolve().as_uri())
 
 
-DOC_TYPE_LABEL = {"registry": "등기사항전부증명서", "lease": "주택임대차계약서", "sale": "매매계약서",
-                  "ledger": "건축물대장", "store_lease": "상가건물 임대차계약서", "cert": "자격증·수료증·성적증명서"}
+DOC_TYPE_LABEL = {t: _FORMS[t]["name"] for t in label_order()}      # 화면·목록에 보일 순서
 STATUS_LABEL = {"auto": "자동 확정", "confirmed": "사용자 확인", "edited": "사용자 수정", "review": "확인 필요"}
 EXPORT_COLUMNS = ["파일", "문서 종류", "항목", "값", "상태", "처음 읽은 값", "확인 사유", "쪽"]
 
 
 # 함수 안에서만 쓰는 다른 기능의 이름: 맨 아래에서 불러온다(서로 부르는 기능끼리 순환해도 됨)
-from DB.storage import custom_types  # noqa: E402,F401
+from DB.storage import custom_forms, custom_types  # noqa: E402,F401
 from Fuc.docx_read.docx_read import DOCX_KEEP, DOCX_MAX_CHARS, ask_text, docx_lines  # noqa: E402,F401
-from Fuc.hallucination_check.hallucination_check import SECOND_READ_ANY, ZOOM_NUMBER, compute_checks, format_ok, lang_field, occurrences, squash, zoom_number  # noqa: E402,F401
+from Fuc.hallucination_check.hallucination_check import compute_checks, format_ok, lang_field, occurrences, squash, zoom_name, zoom_number, zooms_name  # noqa: E402,F401
 from Fuc.make_doc.make_doc import resolve_type  # noqa: E402,F401
 from Fuc.path_a_ocr.path_a_ocr import lines_xy, make_ocr, ocr_items  # noqa: E402,F401
-from Fuc.path_b_vlm.path_b_vlm import HINT, PROMPTS, V2Q, ask, garbled, load, with_ocr  # noqa: E402,F401
+from Fuc.path_b_vlm.path_b_vlm import ask, garbled, load, with_ocr  # noqa: E402,F401
 from Fuc.pdf_text.pdf_text import extract_text_layer  # noqa: E402,F401
 from Fuc.read_pipeline.preprocess import preprocess, render  # noqa: E402,F401
 from Fuc.scoring.scoring import clean  # noqa: E402,F401

@@ -2,12 +2,14 @@
 import difflib
 import os
 import re
+import unicodedata
 from datetime import date
 
 
 from PIL import Image  # noqa: E402
 
 
+from DB.forms import all_builtin_specs, builtin_forms, label_words  # noqa: E402
 from Fuc.scoring.scoring import person_key  # noqa: E402,F401
 
 
@@ -19,38 +21,15 @@ from Fuc.scoring.scoring import person_key  # noqa: E402,F401
 
 # ───────── 좌표 없는 검증(check) + 라벨 줄 잘라서 재질문(crop) ─────────
 # 3B가 낸 bbox는 쓸 수 없었다(중심 적중 21%). 그래서 위치 대신 "B가 낸 값이 페이지에 실제로 있고, 맞는 라벨 줄에 있는가"를 본다.
-# 오류의 절반 이상이 '다른 줄 값 복사'(계약금 자리에 매매대금 등)였기 때문이다. 아래 라벨·규칙은 서식 스키마(서식별로 정해 두는 값)다.
-ALIASES = {
-    "owner_name": ["소유자"], "mortgage_amount": ["채권최고액"], "mortgage_holder": ["근저당권자"],
-    "lessor_name": ["임대인"], "lessee_name": ["임차인"], "deposit_amount": ["보증금"], "monthly_rent": ["차임", "월세"],
-    "contract_start_date": ["상태로"], "contract_end_date": ["인도일로부터"],
-    "seller_name": ["성명"], "buyer_name": ["성명"], "sale_price": ["매매대금"], "down_payment": ["계약금"],
-    "balance_due_date": ["잔금"], "handover_date": ["인도일은"],
-    "bldg_address": ["대지위치"],
-    "st_lessor": ["임대인"], "st_lessee": ["임차인"], "st_deposit": ["보증금"], "st_rent": ["차임", "월세"],
-    "st_mgmt_fee": ["관리비"], "st_start": ["상태로"], "st_end": ["인도일로부터"],
-}
-VOCAB = sorted({a for v in ALIASES.values() for a in v} | {"채무자", "영수자", "중도금", "융자금", "임대보증금", "주민등록번호", "전화", "권리자", "소유자",
-                "환산보증금", "착공일", "허가일", "변동일자"},
-               key=len, reverse=True)
-LAST_OWNER = {"owner_name", "ownership_change_date"}      # 갑구에서는 '가장 아래 소유자 줄'이 현재 소유자
-FIRST_DATE = {"ownership_change_date"}                      # 그 줄의 첫 날짜 = 접수일(둘째 = 등기원인일)
+# 오류의 절반 이상이 '다른 줄 값 복사'(계약금 자리에 매매대금 등)였기 때문이다.
+# 칸마다의 라벨·특별 검사는 코드가 아니라 양식(DB/기본 양식.json, 사용자 양식)의 칸 설정에 있다:
+#   aliases(값 왼쪽 라벨) · last_row/first_date(가장 아래 '소유자' 줄의 첫 날짜) · flag_word(있음/없음을 확인할 낱말)
+#   empty_ok('없음'이 맞을 수 있는 칸: 페이지에 이 낱말이 보이면 '없음'은 틀림) · need_on_page(값이 페이지에 그대로 있어야 함)
+#   decoy_words(취득일과 헷갈리는 날짜 자리) · role_order(서명란 몇 번째 성명 줄) · id(번호: 영문·숫자만 비교)
+#   latest_near(그 낱말 줄 근처의 가장 최근 날짜) · above_word(그 제목 줄보다 위의 값만) · last_payment(그 낱말 줄의 마지막 지급일)
+VOCAB = label_words()
+SPECS = all_builtin_specs()      # 옛 정답 파일처럼 칸 설정 없이 key만 올 때 쓰는 기본 양식 칸 설정
 DATE_ANY = re.compile(r"(?<!\d)((?:19|20)\d{2})(?:\s*년\s*|\s*[.\-/]\s*|\s+)(\d{1,2})(?:\s*월\s*|\s*[.\-/]\s*|\s+)(\d{1,2})(?!\d)")
-FLAG_WORD = {"seizure_flag": "압류", "bldg_violation": "위반건축물"}   # 있음/없음 칸을 페이지 글자로 확인하는 키워드
-# '없음'이 정상일 수 있는 칸: 페이지에 이 칸 이름이 보이면 '없음'은 틀린 답이다
-EMPTY_OK = {"mortgage_amount": ["채권최고액"], "mortgage_holder": ["채권최고액"],
-            "cert_grade": ["등급", "점수", "급수", "Score", "Band", "Grade", "Level", "Result"],
-            "cert_no": ["번호", "No.", "Number"]}
-# 시험별 등급·점수 범위(포트폴리오·국제처에 자주 오는 시험만). 범위를 벗어나면 잘못 읽은 값이다
-GRADE_RANGE = [("toeic", lambda g: g.isdigit() and 10 <= int(g) <= 990 and int(g) % 5 == 0, "TOEIC 점수는 10~990, 5점 단위"),
-               ("ielts", lambda g: re.fullmatch(r"\d(\.[05])?", g) is not None and float(g) <= 9, "IELTS 밴드는 0~9, 0.5 단위"),
-               ("topik", lambda g: g in "123456" and len(g) == 1, "TOPIK 등급은 1~6급"),
-               ("컴퓨터활용능력", lambda g: g in ("1", "2"), "컴퓨터활용능력은 1·2급")]
-# 증명서는 양식이 제각각이라 라벨 검사를 못 한다. 대신 값이 페이지 글자에 그대로 있어야 한다(없는 등급을 지어낸 경우: 수료증에 '1급')
-NEED_ON_PAGE = {"cert_holder", "cert_title", "cert_grade", "cert_issuer", "cert_date", "cert_no"}   # 시험·과정 이름도(오류 주입에서 유일하게 놓친 칸)
-# 증명서에서 취득일과 헷갈리는 날짜의 칸 이름(공백 없이, 소문자)
-DATE_DECOY = ["생년월일", "발급일", "dateofbirth", "birth", "dateofissue", "issued"]
-ROLE_ORDER = {"seller_name": 0, "buyer_name": 1}     # 서명란: '성명 이름' 줄에서 매도인이 첫째, 매수인이 둘째
 # 페이지 OCR 캐시 키에 들어간다: OCR 설정이 바뀌면 옛 캐시를 쓰지 않도록 올린다
 OCR_DET = "PP-OCRv5_server_det" if os.environ.get("BD_OCR") == "server" else "PP-OCRv5_mobile_det"
 
@@ -135,11 +114,11 @@ def any_dates(text):
     return out
 
 
-def lang_field(page_lines_list):
-    """증명서 '문서 언어' 칸: 한글이 10자 이상이면 한국어, 아니면 영어."""
+def lang_field(page_lines_list, key="cert_lang", label="문서 언어"):
+    """'문서 언어' 칸(양식에서 computed: lang): 한글이 10자 이상이면 한국어, 아니면 영어."""
     text = " ".join(L["text"] for lines in page_lines_list for L in lines)
     code = "ko" if sum("가" <= c <= "힣" for c in text) >= 10 else "en"
-    return {"key": "cert_lang", "label": FIELD_LABEL["cert_lang"], "kind": "text", "value": LANG_LABEL[code],
+    return {"key": key, "label": label, "kind": "text", "value": LANG_LABEL[code],
             "status": "auto", "reason": "", "candidates": [], "page": 1, "line_box": None, "compare": ""}
 
 
@@ -220,16 +199,20 @@ def governing(text, pos):
     return best, bend
 
 
-def check_field(kind, key, value, lines):
+def check_field(kind, key, value, lines, spec=None):
     """-> dict(exists, state, label_ok(None=라벨 없음/해당 없음), kw(키워드로 확인함), ys(성명 줄 y), reason)
-    state: pass / contradict(그 자리가 읽혔는데 값이 다름·답이 없음) / unknown(OCR이 그 부분을 못 읽어 판단 불가)"""
+    state: pass / contradict(그 자리가 읽혔는데 값이 다름·답이 없음) / unknown(OCR이 그 부분을 못 읽어 판단 불가)
+    spec: 양식의 칸 설정(없으면 기본 양식에서 key로 찾는다)."""
+    spec = spec if spec is not None else SPECS.get(key, {})
     v = clean(kind, value)
 
     def out(exists, state, label_ok=None, ys=None, reason="", kw=False, suggest=None):
         return {"exists": exists, "state": state, "label_ok": label_ok, "ys": ys, "reason": reason, "kw": kw, "suggest": suggest}
 
     if kind == "flag":
-        word = FLAG_WORD.get(key, "압류")
+        word = spec.get("flag_word")
+        if not word:
+            return out(False, "unknown", reason="있음/없음을 확인할 낱말이 양식에 없음")
         expect = word in squash(" ".join(L["text"] for L in lines))
         ok = ("있" in v) == expect
         return out(ok, "pass" if ok else "contradict", reason=f"{word} 키워드 " + ("있음" if expect else "없음"), kw=True)
@@ -244,8 +227,8 @@ def check_field(kind, key, value, lines):
         ok = v == seen[0]
         return out(ok, "pass" if ok else "contradict", kw=True, reason="" if ok else f"페이지 낱말로는 {seen[0]}", suggest=None if ok else seen[0])
     if v in ("", "없음"):
-        if key in EMPTY_OK:
-            words = EMPTY_OK[key]
+        if spec.get("empty_ok"):
+            words = spec["empty_ok"]
             has = next((w for w in words if w.casefold() in squash(" ".join(L["text"] for L in lines)).casefold()), None)
             return out(not has, "contradict" if has else "pass", reason=f"'없음'인데 페이지에 '{has}' 칸이 있음" if has else "", kw=True)
         return out(False, "contradict", reason="빈 값(B가 답하지 못함)")
@@ -276,43 +259,43 @@ def check_field(kind, key, value, lines):
                 return out(True, "contradict", reason=f"{n}의 지분이 페이지({near[0]})와 다름")
         return out(True, "pass", label_ok=None)
     occ = occurrences(kind, v, lines)
-    if not occ and kind == "date" and key in NEED_ON_PAGE:
+    if not occ and kind == "date" and spec.get("need_on_page"):
         # 월·일은 맞고 연도만 다른 날짜가 페이지에 있으면 연도만 잘못 읽은 것이다.
         # 증명서만: 임대차는 시작일·종료일의 월·일이 같아서 오탐한다(합성 임대차 s07, 2026-10-25)
         y, mo, d = norm("date", v)
         near = [f"{yy}-{mm:02d}-{dd:02d}" for L in lines for yy, mm, dd, _ in any_dates(L["text"]) if (mm, dd) == (mo, d) and yy != y]
         if near:
             return out(False, "contradict", reason=f"페이지에는 연도가 다른 같은 날짜가 있음({near[0]})", suggest=near[0])
-    if not occ and key in NEED_ON_PAGE:
+    if not occ and spec.get("need_on_page"):
         return out(False, "contradict", reason="페이지에서 값을 못 찾음(증명서 칸은 페이지에 그대로 있어야 함)")
-    if key == "cert_no" and occ:
+    if spec.get("id") and occ:
         pat = re.compile(r"(?<![0-9A-Za-z])" + spaced(squash(v)) + r"(?![0-9A-Za-z])")
         if not any(pat.search(lines[i]["text"]) for i, _ in occ if i >= 0):
             return out(True, "contradict", reason="더 긴 번호의 일부로만 보임(값이 잘렸을 수 있음)")
     if kind in ("name", "person") and any(i >= 0 for i, _ in occ) and not standalone(kind, v, lines):
         return out(True, "contradict", reason="더 긴 이름의 일부로만 보임(값이 잘렸을 수 있음)")
-    if key == "bldg_owner_date" and occ:
+    if spec.get("latest_near") and occ:
         # 소유자현황의 변동일자: '소유권…' 줄이나 그 바로 위 줄(이름·지분·날짜 줄)에 있어야 하고, 여러 명이면 가장 최근 날짜
         sq = [squash(L["text"]) for L in lines]
-        near = [i for i in range(len(lines)) if any("소유권" in x for x in sq[i:i + 4])]      # 표 칸 줄바꿈으로 '소유권이전'이 2~3줄 아래
+        near = [i for i in range(len(lines)) if any(spec["latest_near"] in x for x in sq[i:i + 4])]      # 표 칸 줄바꿈으로 '소유권이전'이 2~3줄 아래
         if near:
             occ = [o for o in occ if o[0] in near]
             ds = [(y, mo, d) for i in near for y, mo, d, _ in any_dates(lines[i]["text"])]
             if occ and norm("date", v) < max(ds):
                 y, mo, d = max(ds)
                 return out(True, "contradict", reason="가장 최근 변동일이 아님", suggest=f"{y}-{mo:02d}-{d:02d}")
-    if key == "bldg_area" and occ:
+    if spec.get("above_word") and occ:
         # 전유부분 면적: '공용부분' 제목 줄보다 위에 있어야 한다(아래는 계단실·주차장 같은 공용부분 면적)
-        head = next((i for i, L in enumerate(lines) if "공용부분" in squash(L["text"])), None)
+        head = next((i for i, L in enumerate(lines) if spec["above_word"] in squash(L["text"])), None)
         if head is not None:
             occ = [o for o in occ if 0 <= o[0] < head]
-    if key == "cert_date" and occ and all(i >= 0 and any(w in squash(lines[i]["text"]).casefold() for w in DATE_DECOY) for i, _ in occ):
+    if spec.get("decoy_words") and occ and all(i >= 0 and any(w in squash(lines[i]["text"]).casefold() for w in spec["decoy_words"]) for i, _ in occ):
         return out(True, "contradict", label_ok=False, reason="생년월일·발급일 자리의 날짜(취득일이 아닐 수 있음)")
-    if key in LAST_OWNER:
-        idx = [i for i, L in enumerate(lines) if "소유자" in squash(L["text"])]
+    if spec.get("last_row"):
+        idx = [i for i, L in enumerate(lines) if spec["last_row"] in squash(L["text"])]
         last = idx[-1] if idx else None
         occ = [o for o in occ if o[0] == last]
-        if key in FIRST_DATE:      # 같은 줄에 날짜가 둘이면 첫 번째가 접수일
+        if spec.get("first_date"):      # 같은 줄에 날짜가 둘이면 첫 번째가 접수일
             ds = dates_in(lines[last]["text"]) if last is not None else []
             if ds:
                 occ = [o for o in occ if o[1] == ds[0].start()]
@@ -320,16 +303,16 @@ def check_field(kind, key, value, lines):
                     return out(False, "contradict", reason="소유자 줄의 첫 날짜(접수일)와 다름")
     if not occ:
         return out(False, "unknown", reason="페이지에서 값을 못 찾음")
-    if key == "balance_due_date":
+    if spec.get("last_payment"):
         # 잔금은 마지막 지급이다: '지불' 줄에 더 늦은 날짜가 있으면 중도금 날짜를 옮겨 쓴 것으로 본다.
         # 라벨 칸('잔 금')을 OCR이 못 읽는 양식에서 이 오류를 놓쳤다(사용자 매매 샘플, 2026-10-23).
-        pays = [tuple(int(x) for x in m.groups()) for L in lines if "지불" in squash(L["text"]) for m in DATE_ANY.finditer(L["text"])]
+        pays = [tuple(int(x) for x in m.groups()) for L in lines if spec["last_payment"] in squash(L["text"]) for m in DATE_ANY.finditer(L["text"])]
         mine = tuple(int(x) for x in re.findall(r"\d+", v)[:3])
         if pays and mine < max(pays):
             return out(True, "pass", label_ok=False, reason="잔금일보다 늦은 지급일이 있음(잔금은 마지막 지급)")
     if all(i < 0 for i, _ in occ):
         return out(True, "pass")      # 여러 줄에 걸친 값: 존재만 확인
-    al = ALIASES.get(key)
+    al = spec.get("aliases")
     if not al:
         return out(True, "pass")
     gov, good, trunc = [], [], False
@@ -346,50 +329,62 @@ def check_field(kind, key, value, lines):
                 good.append(i)
     if any(g is None for g in gov) and not good:
         return out(True, "pass", reason="왼쪽에 라벨 없음")
-    if key in ROLE_ORDER and good:      # 서명란 순서: 이 이름이 자기 역할 줄(매도인=첫째, 매수인=둘째)에 있어야 한다
+    order = spec.get("role_order")
+    if order is not None and good:      # 서명란 순서: 이 이름이 자기 역할 줄(매도인=첫째, 매수인=둘째)에 있어야 한다
         rl = role_lines(lines)
-        want = rl[ROLE_ORDER[key]] if ROLE_ORDER[key] < len(rl) else None
+        want = rl[order] if order < len(rl) else None
         if want is not None and want not in good:
-            return out(True, "pass", label_ok=False, reason=f"서명란 순서: {ROLE_ORDER[key] + 1}번째 성명 줄에 없음")
+            return out(True, "pass", label_ok=False, reason=f"서명란 순서: {order + 1}번째 성명 줄에 없음")
     return out(True, "pass", label_ok=bool(good), ys=min((lines[i]["cy"] for i in good), default=None),
                reason="" if good else ("라벨과 값 사이에 다른 글자(값이 잘렸을 수 있음)" if trunc else "왼쪽 라벨=" + "/".join(sorted({str(g) for g in gov}))))
 
 
-def cross_pairs(doc_type, vals, ys):
-    """필드 사이 규칙. 어긋나면 [(필드a, 필드b, 사유)] — 어느 쪽이 틀렸는지는 arbitrate()가 가린다."""
+def score_ok(g, rng):
+    """등급·점수 g가 시험의 범위(min~max, step 단위) 안인가."""
+    try:
+        x = float(g)
+    except ValueError:
+        return False
+    steps = (x - rng["min"]) / rng["step"]
+    return rng["min"] <= x <= rng["max"] and abs(steps - round(steps)) < 1e-9
+
+
+def cross_pairs(rules, vals, ys, kinds=None):
+    """칸 사이 규칙(양식의 rules). 어긋나면 [(칸a, 칸b, 사유)] — 어느 쪽이 틀렸는지는 arbitrate()가 가린다.
+    규칙: less(a < b여야 함) · differ(keys의 값이 서로 달라야 함) · order(a의 서명 줄이 b보다 위) · not_future(a가 오늘보다 뒤가 아님)
+    · score_range(title 칸에 시험 이름이 있으면 a 칸의 점수가 그 시험 범위 안)."""
+    kinds = kinds or {}
+
+    def kind(k):
+        return kinds.get(k) or SPECS.get(k, {}).get("kind", "text")
+
     p = []
-    if doc_type == "sale":
-        d, s = norm("amount", vals.get("down_payment", "")), norm("amount", vals.get("sale_price", ""))
-        if d and s and d >= s:
-            p.append(("down_payment", "sale_price", "계약금이 매매대금 이상"))
-        if vals.get("seller_name") and norm("name", vals["seller_name"]) == norm("name", vals.get("buyer_name", "")):
-            p.append(("seller_name", "buyer_name", "매도인=매수인"))
-        sy, by = ys.get("seller_name"), ys.get("buyer_name")
-        if sy is not None and by is not None and sy >= by:
-            p.append(("seller_name", "buyer_name", "서명란 순서(매도인이 위) 어긋남"))
-    if doc_type == "lease" and vals.get("lessor_name") and norm("name", vals["lessor_name"]) == norm("name", vals.get("lessee_name", "")):
-        p.append(("lessor_name", "lessee_name", "임대인=임차인"))
-    if doc_type == "store_lease":
-        if vals.get("st_lessor") and norm("name", vals["st_lessor"]) == norm("name", vals.get("st_lessee", "")):
-            p.append(("st_lessor", "st_lessee", "임대인=임차인"))
-        dep, rent = norm("amount", vals.get("st_deposit", "")), norm("amount", vals.get("st_rent", ""))
-        if dep and rent and rent >= dep:
-            p.append(("st_rent", "st_deposit", "차임이 보증금 이상"))
-    if doc_type == "cert":
-        title, g = (vals.get("cert_title") or "").casefold(), grade_key(vals.get("cert_grade", ""))
-        for word, ok, why in GRADE_RANGE:
-            if re.search(re.escape(word.casefold()) + r"(?![a-z])", title) and g and g != grade_key("없음") and not ok(g):
-                p.append(("cert_grade", "cert_grade", why))
-        names = [k for k in ("cert_holder", "cert_title", "cert_issuer") if vals.get(k) not in (None, "", "없음")]
-        for i, a in enumerate(names):
-            for b_ in names[i + 1:]:
-                if norm("person", vals[a]) == norm("person", vals[b_]):
-                    p.append((a, b_, "두 칸의 값이 같음(다른 칸 값을 옮겨 쓴 것일 수 있음)"))
-        d = norm("date", vals.get("cert_date", ""))
-        if d and d > tuple(date.today().timetuple()[:3]):
-            p.append(("cert_date", "cert_date", "취득일이 오늘보다 뒤"))
-    if doc_type == "registry" and vals.get("owner_name") and norm("name", vals["owner_name"]) == norm("name", vals.get("mortgage_holder", "")):
-        p.append(("owner_name", "mortgage_holder", "소유자=근저당권자"))
+    for rule in rules or []:
+        t, a, b = rule["type"], rule.get("a"), rule.get("b")
+        if t == "less":
+            x, y = norm(kind(a), vals.get(a, "")), norm(kind(b), vals.get(b, ""))
+            if x and y and x >= y:
+                p.append((a, b, rule["why"]))
+        elif t == "differ":
+            keys = [k for k in rule["keys"] if vals.get(k) not in (None, "", "없음")]
+            nk = kind(rule["keys"][0])
+            for i, x in enumerate(keys):
+                for y in keys[i + 1:]:
+                    if norm(nk, vals[x]) == norm(nk, vals[y]):
+                        p.append((x, y, rule["why"]))
+        elif t == "order":
+            sy, by = ys.get(a), ys.get(b)
+            if sy is not None and by is not None and sy >= by:
+                p.append((a, b, rule["why"]))
+        elif t == "not_future":
+            d = norm("date", vals.get(a, ""))
+            if d and d > tuple(date.today().timetuple()[:3]):
+                p.append((a, a, rule["why"]))
+        elif t == "score_range":
+            title, g = (vals.get(rule["title"]) or "").casefold(), grade_key(vals.get(a, ""))
+            for rng in rule["ranges"]:
+                if re.search(re.escape(rng["word"].casefold()) + r"(?![a-z])", title) and g and g != grade_key("없음") and not score_ok(g, rng):
+                    p.append((a, a, rng["why"]))
     return p
 
 
@@ -406,11 +401,18 @@ def arbitrate(pairs, own):
 
 # ───────── 두 번째 판독(OCR 줄 없이 다시 묻기) ─────────
 # OCR이 틀리게 읽은 글자를 B가 그대로 따라 쓰면(롯데캐슬→못데캐슬) 규칙 검사로 못 잡는다. 이미지로만 한 번 더 읽어 비교한다.
-# - 주소: 두 답이 다르면 사람 확인(확인용 샘플에서 오류 검출 4/7→6/7, 2026-10-24)
+# 종합설계 요약 3번 ②: 모든 칸을 OCR 없이 한 번 더 읽어 비교한다(2026-11-25 요약에 맞춤. 전에는 주소 칸만).
+# - 이름이 아닌 칸: 두 답이 다르면 사람 확인(주소: 확인용 샘플에서 오류 검출 4/7→6/7, 2026-10-24)
 # - 이름: 자모 하나만 다를 때(한 획 정도: 문소율/문소을)만 사용자 판별. 아예 다른 이름은 이 규칙으로는 경고하지 않는다
-#   (OCR 줄 없이 읽은 이름은 다른 사람 이름을 고르는 경우가 많아 전부 경고하면 오탐이 너무 많았다)
-SECOND_READ_ANY = {"property_address"}
-ZOOM_NUMBER = {"cert_no", "cert_grade", "cert_date"}      # 숫자 칸: 확대해 다시 읽은 값과 한 글자라도 다르면 사용자 확인
+#   (OCR 줄 없이 읽은 이름은 다른 사람 이름을 고르는 경우가 많아 전부 경고하면 오탐이 너무 많았다). 이름은 ③ 확대 재판독이 맡는다
+NAME_KINDS = ("name", "person", "owners")
+# 종합설계 요약 3번 ③: 확대해 다시 읽는 칸은 양식의 칸 설정 zoom으로 정한다
+#   zoom: "number"(번호·등급·날짜: 확대해 다시 읽은 값과 한 글자라도 다르면 사용자 확인) | "name"(이름·기관명)
+#   이름 칸(name·owners)은 따로 적지 않아도 확대한다. 시험·과정 이름처럼 긴 값은 OCR 조각 하나에 안 담겨 하지 않는다
+
+
+def zooms_name(spec):
+    return spec.get("zoom") == "name" or spec.get("kind") in ("name", "owners")
 _CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
 _JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
 _JONG = " ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ"
@@ -438,7 +440,7 @@ def edit_distance(a, b):
     return prev[-1]
 
 
-def second_read_issue(key, kind, ans, ans2, strict=False):
+def second_read_issue(key, kind, ans, ans2, strict=False, spec=None):
     """두 번째 판독과 비교해 사람 확인이 필요하면 사유 문자열, 아니면 ''.
     strict: 두 번 읽기(joint) 방식 — 두 값이 다르기만 하면 사용자 판단(2026-10-28 사용자 결정)."""
     if ans2 is None or ans is None:
@@ -448,18 +450,21 @@ def second_read_issue(key, kind, ans, ans2, strict=False):
         return ""
     if strict:
         return f"두 번 읽은 값이 다름({clean(kind, ans)[:20]} / {clean(kind, ans2)[:20]})"
-    if key in SECOND_READ_ANY:
+    if kind not in NAME_KINDS:
+        if kind != "flag" and clean(kind, ans2).strip() in ("", "없음"):
+            return ""       # 다시 읽기에서 값을 못 찾은 것은 반대 증거가 아니다
+        if isinstance(a, str) and isinstance(b, str) and squash(unicodedata.normalize("NFKC", a)) == squash(unicodedata.normalize("NFKC", b)):
+            return ""       # 모양만 다른 같은 글자(Ⅰ/I, 전각 숫자, 띄어쓰기)
+        if (spec if spec is not None else SPECS.get(key, {})).get("id") and alnum_key(a) == alnum_key(b):
+            return ""
         return f"OCR 없이 다시 읽은 값과 다름({clean(kind, ans2)[:30]})"
-    if key in ZOOM_NUMBER:
-        x, y = (alnum_key(a), alnum_key(b)) if key == "cert_no" else (a, b)
-        return f"확대해 다시 읽은 값과 다름({clean(kind, ans2)[:20]})" if x != y else ""
     if kind == "name" and len(a) == len(b) and 1 <= edit_distance(jamo(a), jamo(b)) <= 3:
         return f"이름 {'한 획' if edit_distance(jamo(a), jamo(b)) == 1 else '몇 획'} 차이 — 사용자 확인({a} / {b})"
-    if kind == "person":      # 한글 이름은 한 획 차이만, 외국어 이름은 다르면 사람 확인(한 획 기준이 없음)
+    if kind == "person":      # 한글 이름은 한 획 차이만(외국어 이름은 ③ 확대 재판독이 맡는다)
         if re.fullmatch(r"[가-힣]+", a) and re.fullmatch(r"[가-힣]+", b):
             d = edit_distance(jamo(a), jamo(b))
             return f"이름 {'한 획' if d == 1 else '몇 획'} 차이 — 사용자 확인({a} / {b})" if len(a) == len(b) and 1 <= d <= 3 else ""
-        return f"확대해 다시 읽은 이름과 다름({clean(kind, ans2)[:20]})"
+        return ""
     if kind == "owners" and len(a) == len(b):
         d = sum(edit_distance(jamo(x[0]), jamo(y[0])) for x, y in zip(a, b))
         if d == 1:
@@ -501,11 +506,11 @@ def zoom_raw(model, proc, img, part, pad=8, scale=3):
     return ask(model, proc, crop, ZOOM_Q, max_new=48)[0]
 
 
-def zoom_number(model, proc, img, lines, key, value):
+def zoom_number(model, proc, img, lines, spec, value):
     """숫자 칸(증명서 번호·등급·취득일)의 확대 재판독 값. OCR이 숫자 하나를 잘못 읽고(885→865) AI가 따라 쓴 경우를 잡는다.
     칸을 못 찾거나 다시 읽은 글자에서 비교할 값을 못 뽑으면 None(판단 보류)."""
     parts = [q for L in lines for q in L.get("parts", [])]
-    if key == "cert_date":
+    if spec["kind"] == "date":
         want = norm("date", value)
         part = next((q for q in parts if any(d[:3] == want for d in any_dates(q["text"]))), None)
         if part is None:
@@ -513,20 +518,67 @@ def zoom_number(model, proc, img, lines, key, value):
         ds = any_dates(zoom_raw(model, proc, img, part))
         got = next((d for d in ds if d[:3] == want), ds[0] if ds else None)
         return f"{got[0]}-{got[1]:02d}-{got[2]:02d}" if got else None
-    if key == "cert_grade":
+    if spec["kind"] == "grade":
         want = grade_key(value)
         part = next((q for q in parts if any(grade_key(t) == want for t in re.split(r"[\s:：,/|]+", q["text"]))), None)
         if part is None:
             return None
         toks = [t for t in re.split(r"[\s:：,/|]+", zoom_raw(model, proc, img, part)) if re.search(r"\d", t)]
         return value if any(grade_key(t) == want for t in toks) else (toks[0] if toks else None)
-    k = alnum_key(value)          # cert_no
+    k = alnum_key(value)          # 번호(id)
     part = zoom_box(lines, k, alnum_key)
     if part is None or len(k) < 4:
         return None
     t = alnum_key(zoom_raw(model, proc, img, part))
     w = best_window(k, t)
     return w if t and edit_distance(k, w) <= 2 else None      # 많이 다르면 엉뚱한 칸을 자른 것 — 판단 보류
+
+
+def _zoom_word(model, proc, img, lines, word):
+    """이름 하나를 OCR 조각에서 찾아 확대해 다시 읽은 값(person_key 꼴). 못 찾거나 많이 다르면 None(판단 보류)."""
+    k = person_key(word)
+    part = zoom_box(lines, k) if len(k) >= 2 else None
+    if part is None:
+        return None
+    t = person_key(zoom_raw(model, proc, img, part))
+    w = best_window(k, t)
+    return w if t and edit_distance(jamo(k), jamo(w)) <= 3 else None
+
+
+def zoom_name(model, proc, img, lines, kind, value):
+    """이름·기관명 칸 확대 재판독 값(종합설계 요약 3번 ③). 소유자 여럿이면 이름마다 확대하고 지분은 그대로."""
+    if kind != "owners":
+        return _zoom_word(model, proc, img, lines, value)
+    got = []
+    for name, share in parse_owners(value):
+        z = _zoom_word(model, proc, img, lines, name)
+        if z is None:
+            return None
+        got.append((z, share))
+    return owners_text(got) if got else None
+
+
+def _name_keys(kind, s):
+    return [person_key(n) for n, _ in parse_owners(s)] if kind == "owners" else [person_key(re.sub(r"[(（]\s*(주|유|사)\s*[)）]", "", s))]
+
+
+def _same_name(a, z):
+    """확대한 조각에 이름 일부만 찍혀도(앞뒤가 잘림) 같은 것으로 본다. 글자가 바뀐 것(굿/곳)만 다름."""
+    return a == z or len(z) >= 2 and (z in a or a in z)
+
+
+def zoom_issue(key, kind, ans, z, spec=None):
+    """확대해 다시 읽은 값(z)과 다르면 사유, 아니면 ''."""
+    if z is None or ans is None:
+        return ""
+    spec = spec if spec is not None else SPECS.get(key, {})
+    if spec.get("zoom") == "number":
+        a, b = norm(kind, clean(kind, ans)), norm(kind, clean(kind, z))
+        x, y = (alnum_key(a), alnum_key(b)) if spec.get("id") else (a, b)
+        return f"확대해 다시 읽은 값과 다름({clean(kind, z)[:20]})" if a and b and x != y else ""
+    a, b = _name_keys(kind, clean(kind, ans)), _name_keys(kind, z)
+    same = len(a) == len(b) and all(_same_name(x, y) for x, y in zip(a, b))
+    return "" if same else f"확대해 다시 읽은 이름과 다름({z[:20]})"
 
 
 def compute_checks(gt, docs, answers, cache, crops=None):
@@ -542,15 +594,19 @@ def compute_checks(gt, docs, answers, cache, crops=None):
             r = answers.get((name, key))
             if f["b_skip"] or r is None:
                 continue
-            c = check_field(f["kind"], key, r["ans"], cache[doc["pages"][f["page"] - 1]])
-            if (f["kind"] in ("person", "name", "owners") and c["reason"].startswith("페이지에서 값을 못 찾음") and r.get("ans2")
-                    and norm(f["kind"], clean(f["kind"], r["ans2"])) == norm(f["kind"], clean(f["kind"], r["ans"]))):
+            sp = f.get("spec") or SPECS.get(key, {})
+            c = check_field(f["kind"], key, r["ans"], cache[doc["pages"][f["page"] - 1]], sp)
+            if (f["kind"] in NAME_KINDS and c["reason"].startswith("페이지에서 값을 못 찾음")
+                    and (r.get("zoom") and not zoom_issue(key, f["kind"], r["ans"], r["zoom"], sp)
+                         or r.get("strict2") and r.get("ans2")
+                         and norm(f["kind"], clean(f["kind"], r["ans2"])) == norm(f["kind"], clean(f["kind"], r["ans"])))):
                 # OCR이 흐리게 읽어 페이지 글자에 없어도, 칸을 확대해 따로 읽은 값이 같으면 인쇄된 값으로 본다
                 c = {**c, "exists": True, "state": "pass", "reason": ""}
             vals[key], per[key] = clean(f["kind"], r["ans"]), c
             if c["ys"] is not None:
                 ys[key] = c["ys"]
-        pairs = cross_pairs(doc["doc_type"], vals, ys)
+        rules = doc["rules"] if "rules" in doc else builtin_forms().get(doc["doc_type"], {}).get("rules", [])
+        pairs = cross_pairs(rules, vals, ys, {k: f["kind"] for k, f in doc["fields"].items()})
         old = {k for a, b, _ in pairs for k in (a, b)}
         # 크롭 답이 다를 때, 그 크롭 답이 페이지 OCR에서도 보일 때만 경고한다(발표 7장의 오탐 줄이기 계획).
         # Qwen3-VL-4B는 이름 크롭에 '성명'·주소·한 글자 오독을 자주 답해 정답을 오탐했다(사용자 매매 샘플, 2026-10-23).
@@ -562,8 +618,10 @@ def compute_checks(gt, docs, answers, cache, crops=None):
             seen = cm["crop"] not in VOCAB and format_ok(f["kind"], cm["crop"]) and occurrences(f["kind"], cm["crop"], cache[doc["pages"][f["page"] - 1]])
             return bool(seen)
         crop_bad = {k: crop_disagrees(k) for k in per}
-        second = {k: second_read_issue(k, doc["fields"][k]["kind"], answers[(name, k)].get("ans"), answers[(name, k)].get("ans2"),
-                                       strict=answers[(name, k)].get("strict2", False)) for k in per}
+        sps = {k: doc["fields"][k].get("spec") or SPECS.get(k, {}) for k in per}
+        second = {k: zoom_issue(k, doc["fields"][k]["kind"], answers[(name, k)].get("ans"), answers[(name, k)].get("zoom"), sps[k])
+                  or second_read_issue(k, doc["fields"][k]["kind"], answers[(name, k)].get("ans"), answers[(name, k)].get("ans2"),
+                                       strict=answers[(name, k)].get("strict2", False), spec=sps[k]) for k in per}
         # '페이지에서 값을 못 찾음'(unknown)도 사람 확인: 예전엔 OCR이 놓쳤을 수 있다고 통과시켰지만, 오류 주입 시험(2026-10-25)에서
         # 한 글자 틀린 금액·날짜·주소·이름이 모두 이 길로 자동 확정됐다(부동산 20건 중 13건 놓침)
         own = {k: c["label_ok"] is False or c["state"] in ("contradict", "unknown") or crop_bad[k] or bool(second[k]) for k, c in per.items()}
@@ -585,5 +643,5 @@ def compute_checks(gt, docs, answers, cache, crops=None):
 
 # 함수 안에서만 쓰는 다른 기능의 이름: 맨 아래에서 불러온다(서로 부르는 기능끼리 순환해도 됨)
 from Fuc.path_b_vlm.path_b_vlm import ask  # noqa: E402,F401
-from Fuc.read_pipeline.read_pipeline import FIELD_LABEL, LANG_LABEL  # noqa: E402,F401
+from Fuc.read_pipeline.read_pipeline import LANG_LABEL  # noqa: E402,F401
 from Fuc.scoring.scoring import CHOICES, CHOICE_WORDS, NUM_RE, SHARE_RE, clean, grade_key, norm, owners_text, parse_owners  # noqa: E402,F401

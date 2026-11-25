@@ -11,8 +11,9 @@ def custom_path():
     return Path(os.environ.get("BD_CUSTOM") or ROOT / "새 문서 종류.json")
 
 
-def custom_types(strict=False):
-    """strict=True면 파일이 깨졌을 때 {} 대신 ValueError(저장하다 기존 종류를 지우지 않게)."""
+def _custom_raw(strict=False):
+    """파일 그대로 {종류 이름: [{"label", "kind"}] 또는 옛 형식 [칸 이름]}.
+    strict=True면 파일이 깨졌을 때 {} 대신 ValueError(저장하다 기존 종류를 지우지 않게)."""
     p = custom_path()
     try:
         data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
@@ -23,26 +24,39 @@ def custom_types(strict=False):
     return {k: list(v) for k, v in data.items() if isinstance(v, list)} if isinstance(data, dict) else {}
 
 
-def save_custom_type(name, labels):
-    """새 문서 종류와 사용자가 확정한 칸 이름들을 저장한다(다음에 같은 종류가 오면 이 칸들을 읽음)."""
+def custom_types(strict=False):
+    """사용자 양식 {종류 이름: [칸 이름]} (화면이 쓰는 모양)."""
+    return {k: [f["label"] if isinstance(f, dict) else str(f) for f in v] for k, v in _custom_raw(strict).items()}
+
+
+def custom_forms():
+    """사용자 양식 {종류 이름: 양식}. 칸마다 종류(kind)가 있어 기본 양식과 같은 검사를 받는다."""
+    return {k: custom_form(k, v) for k, v in _custom_raw().items()}
+
+
+def save_custom_type(name, labels, kinds=None):
+    """새 문서 종류와 사용자가 확정한 칸 이름들을 저장한다(다음에 같은 종류가 오면 이 칸들을 읽음).
+    kinds: 칸 이름 → 칸 종류(date·amount·name 등). 없는 칸은 이름으로 짐작해 함께 저장한다."""
     name = (name or "").strip()
     labels = list(dict.fromkeys(str(x).strip() for x in labels if str(x).strip()))
     if not name or not labels:
         raise ValueError("문서 종류 이름과 칸을 하나 이상 정하세요")
     if resolve_type(name):
         raise ValueError(f"'{name}'은 이미 있는 문서 종류예요")
-    data = {**custom_types(strict=True), name: labels}
+    kinds = kinds or {}
+    fields = [{"label": lab, "kind": kinds[lab] if kinds.get(lab) in KINDS else guess_kind(lab)} for lab in labels]
+    data = {**_custom_raw(strict=True), name: fields}
     p = custom_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, p)      # 읽는 쪽이 반쯤 쓴 파일을 보지 않게
-    return data
+    return custom_types()
 
 
 def delete_custom_type(name):
     """확정해 둔 새 문서 종류를 지운다(다음부터는 처음 보는 종류로 읽음)."""
-    data = custom_types(strict=True)
+    data = _custom_raw(strict=True)
     if name not in data:
         raise ValueError(f"'{name}' 문서 종류가 없어요")
     del data[name]
@@ -50,7 +64,7 @@ def delete_custom_type(name):
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, p)
-    return data
+    return custom_types()
 
 
 def forms_dir():
@@ -73,4 +87,5 @@ def save_result(doc):
 
 
 # 함수 안에서만 쓰는 다른 기능의 이름: 맨 아래에서 불러온다(서로 부르는 기능끼리 순환해도 됨)
+from DB.forms import KINDS, custom_form, guess_kind  # noqa: E402,F401
 from Fuc.make_doc.make_doc import resolve_type  # noqa: E402,F401

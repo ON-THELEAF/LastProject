@@ -58,6 +58,7 @@ svc = DesktopService(models)
   - 알려진 6종이면 `doc_type`이 그 키예요.
   - 처음 보는 문서면 `doc_type: "custom"`, `doc_name: "위임장"` 같은 이름이 와요. 칸은 AI가 골라요.
   - `new_type: true`면 모든 칸이 확인 필요예요. 사용자가 **칸 이름 목록을 고치고 확정하면** `save_custom_type(doc_name, [칸 이름…])`을 부르세요. 다음에 같은 종류가 오면 그 칸들을 읽어요(`new_type: false`).
+  - 칸 종류를 정하려면 `save_custom_type(doc_name, [칸 이름…], {칸 이름: "date"|"amount"|"number"|"name"|"text"|"flag"})`. 빠진 칸은 이름으로 짐작해 같이 저장해요(보증금→금액, 시작일→날짜, 임대인→이름). 저장한 종류는 기본 양식과 같은 환각검증(형식·페이지 대조·다시 읽기·이름 확대)을 받아요.
   - 저장된 종류 목록은 `custom_types()` → `{종류 이름: [칸 이름…]}`. 저장 파일이 깨져 있으면 `save_custom_type`이 덮어쓰지 않고 `ValueError`를 내요.
   - 확정한 칸 목록은 나중에 고치거나(`save_custom_type`을 같은 이름으로 다시 부르면 덮어씀) 지울 수 있어요(`delete_custom_type(name)`).
   - 새 문서 종류는 **모든 쪽**을 읽어요. 앞 쪽에서 찾은 칸은 뒤 쪽에서 다시 묻지 않고, 칸마다 찾은 쪽이 `page`에 들어가요.

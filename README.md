@@ -33,7 +33,7 @@
 | `Front/` | 화면. `src/`(피그마 메이크 코드 기반): `App.tsx`(홈·위쪽 메뉴), `reader.tsx`(문서 읽기·결과 확인·내보내기), `make.tsx`(문서 만들기 1~3단계), `documents.tsx`(문서 관리), `ui.tsx`(공통 모양), `api.ts`(엔진 부르기). `dist/`는 `npm run build` 결과(저장소에 안 올림) |
 | `SERVER/` | 서버: `web_app.py`(이 PC 안 서버·Edge 앱 창), `web_api.py`(화면 버튼 ↔ DesktopService), `service.py`(엔진의 유일한 입구), `worker.py`(읽기 작업 스레드), `offline.py`(인터넷 차단·모델 위치·설정.json), `INTERFACE.md`(약속), `requirements.txt` |
 | `Fuc/` | 기능: `bridgedocs.py`(입구·명령줄) 아래 기능별 폴더 — `path_a_ocr`(A경로 OCR), `pdf_text`(PDF 안 글자), `docx_read`(docx 글자), `path_b_vlm`(B경로 AI 질문), `hallucination_check`(환각검증·재판독), `read_pipeline`(문서 읽기 전체 흐름·종류 판별·기울기 보정), `view`(결과 보기 HTML), `export`(판정·내보내기), `make_doc`(문서 만들기), `scoring`(정답 비교) |
-| `DB/` | 저장·불러오기: `storage.py`(새 문서 종류 목록 JSON, 워드 양식 폴더, 결과 JSON 다시 저장) |
+| `DB/` | 저장·불러오기: `기본 양식.json`(기본 문서 양식: 종류·칸·칸 종류·AI 질문·검사 규칙. 코드에는 양식이 없음), `forms.py`(양식 불러오기·사용자 양식의 칸 종류 짐작), `storage.py`(새 문서 종류 목록 JSON, 워드 양식 폴더, 결과 JSON 다시 저장) |
 | `models/` | AI 모델(약 9GB, 저장소에 안 올림) |
 
 ## 설치할 때 정하는 폴더
