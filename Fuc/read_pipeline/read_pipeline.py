@@ -301,7 +301,7 @@ def read_fields(fm, model, proc, pages, lines_list, is_docx, check, mode="field"
         else:
             row = {"ans": ask(model, proc, pages[pi], with_ocr(q, lines_list[pi]), max_new=64)[0], "norm_c": False}
             # 종합설계 요약 3번 ② 모든 칸을 OCR 없이 다시 읽기, ③ 이름·기관명(과 숫자 칸)은 그 영역을 확대해 다시 읽기
-            v = clean(kind, row["ans"])
+            v = clean(kind, row["ans"], sp)
             try:
                 row["ans2"] = ask(model, proc, pages[pi], q, max_new=64)[0]
                 if v not in ("", "없음") and sp.get("zoom") == "number":
@@ -324,8 +324,8 @@ def read_fields(fm, model, proc, pages, lines_list, is_docx, check, mode="field"
         review = c["pol"] or garbled(answers[("doc", key)]["ans"]) or failed
         ans2 = answers[("doc", key)].get("ans2")
         # 두 번째 판독이 다른 칸 값(이름 자리에 주소 등)을 답하면 후보 버튼에 넣지 않는다
-        second = clean(f["kind"], ans2) if ans2 else ""
-        cands = list(dict.fromkeys(v for v in (c["value"], second if format_ok(f["kind"], second) else "", c.get("suggest") or "") if v)) if review else []
+        second = clean(f["kind"], ans2, f["spec"]) if ans2 else ""
+        cands = list(dict.fromkeys(v for v in (c["value"], second if format_ok(f["kind"], second, f["spec"]) else "", c.get("suggest") or "") if v)) if review else []
         out.append({"key": key, "label": f["spec"]["label"], "kind": f["kind"], "value": c["value"],
                     "status": "review" if review else "auto",
                     "reason": (c["reason"] or ("두 번째 판독 실패 — 확인하세요" if failed else "")) if review else "",

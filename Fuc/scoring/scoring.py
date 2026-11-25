@@ -1,7 +1,6 @@
 """채점: 답변 후처리와 정답 비교(A·B 경로 공용)  (bridgedocs.py에서 나눔)"""
 import re
 
-from DB.forms import all_builtin_specs
 
 
 # ============================================================================
@@ -45,11 +44,6 @@ def owners_text(pairs):
 
 
 GRADE_DROP = re.compile(r"topik|level|band|score|급|점|\s|[()（）]", re.I)
-# 고르기 칸(choice)의 값과 낱말은 양식에 있다(기본 양식의 '증명서 종류' 칸). 앞에 있는 값이 우선:
-# 성적표에도 '합격'·'certificate'가, 수료증에도 '인정'이 나온다
-_CHOICE_SPEC = [c for s in all_builtin_specs().values() if s["kind"] == "choice" for c in s.get("choices", [])]
-CHOICES = tuple(dict.fromkeys(c["value"] for c in _CHOICE_SPEC))
-CHOICE_WORDS = tuple((tuple(c["words"]), c["value"]) for c in _CHOICE_SPEC if c["value"] != "기타")
 
 
 SEAL_TAIL = re.compile(r"\s*[\[(（]([^\[\]()（）]{0,2})[\])）]?\s*$")
@@ -94,8 +88,9 @@ def norm(kind, s):
     return re.sub(r"\s+", "", s)
 
 
-def clean(kind, ans):
-    """VLM 답변 후처리. 인용부호·접두어 제거, 거부 응답은 빈 값, 종류별로 값만 추출."""
+def clean(kind, ans, spec=None):
+    """VLM 답변 후처리. 인용부호·접두어 제거, 거부 응답은 빈 값, 종류별로 값만 추출.
+    spec: 칸 설정. 고르기 칸(choice)은 그 칸의 choices로 값을 정한다(없으면 답 그대로)."""
     a = (ans or "").strip().strip("`*")
     a = re.sub(r"^(답|정답|Answer)\s*[:：]\s*", "", a)
     if any(w in a for w in REFUSAL):
@@ -115,12 +110,9 @@ def clean(kind, ans):
             return f"{m[1]}-{int(m[2]):02d}-{int(m[3]):02d}"
         ds = any_dates(a)      # 'March 12, 2025' 같은 답
         return f"{ds[0][0]}-{ds[0][1]:02d}-{ds[0][2]:02d}" if ds else a
-    if kind == "choice":     # 영어로 답해도(Certificate of Completion) 세 종류 중 하나로
+    if kind == "choice":     # 영어로 답해도(Certificate of Completion) 정해 둔 값 중 하나로. 앞에 있는 값이 우선
         low = a.casefold()
-        for words, val in CHOICE_WORDS + ((("기타",), "기타"),):
-            if any(w in low for w in words):
-                return val
-        return a
+        return next((c["value"] for c in (spec or {}).get("choices", []) if any(w.casefold() in low for w in c["words"])), a)
     if kind == "person":
         a = re.sub(r"^(성명|이름|Name)\s*[:：]?\s*", "", a, flags=re.I)
         return strip_seal(a).strip("\"“”'")

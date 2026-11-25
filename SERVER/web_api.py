@@ -19,7 +19,7 @@ UPLOADS = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "BridgeDocs" / "up
 
 def docx_paragraphs(path: Path) -> list[str]:
     """워드 문서 본문의 문단 글자들(표 안 문단 포함, 순서대로). 문서 관리 미리보기용.
-    shortcut: 문단 글자만 보여 준다(표·그림 모양은 없음). 모양까지 필요하면 convert_made처럼 Word로 그림을 만든다."""
+    shortcut: 문단 글자만 보여 준다(표·그림 모양은 없음). 모양까지 필요하면 Word로 PDF를 만들어 그린다."""
     with zipfile.ZipFile(path) as z:
         xml = z.read("word/document.xml").decode("utf-8")
     paras = re.findall(r"<w:p[ >].*?</w:p>", xml, re.S)
@@ -178,36 +178,3 @@ class Api:
     def remove_template(self, id: str) -> None:
         self.svc.remove_template(id)
 
-    # ── 문서 만들기 ──
-    def preview_data(self, path: str, n: int = 8) -> list[list[str]]:
-        return self.svc.preview_data(Path(path), n)
-
-    def prepare_make(self, data: str, template: str, header: bool) -> list[dict]:
-        return self.svc.prepare_make(Path(data), Path(template), header)
-
-    def make(self, data: str, header: bool, template: str, out_dir: str, name: str = "문서",
-             values: dict | None = None, names: list[str] | None = None, kinds: list[str] | None = None) -> list[str]:
-        """양식 하나로 데이터의 모든 줄을 만든다. values: {문서 이름: {칸: 값}}(화면에서 고친 값).
-        names: 문서마다 사용자가 정한 파일 이름(확장자 없이). kinds: "docx"·"pdf"·"png"(docx를 안 고르면 변환 뒤 지움)."""
-        docs = self.svc.prepare_make(Path(data), Path(template), header)
-        posted = [{"name": d["name"], "make": True, "values": (values or {}).get(d["name"], {})} for d in docs]
-        paths = [Path(r["path"]) for r in self.svc.submit_make(docs, posted, Path(out_dir), name)["results"]]
-        if names:
-            renamed = []
-            for p, n in zip(paths, names):
-                q = p.with_name(self.svc._made_name(n) + ".docx")
-                os.replace(p, q)
-                renamed.append(q)
-            paths = renamed
-        kinds = kinds or ["docx"]
-        made = list(paths) if "docx" in kinds else []
-        for k in ("pdf", "png"):
-            if k in kinds:
-                made += self.svc.convert_made(paths, k)
-        if "docx" not in kinds:
-            for p in paths:
-                p.unlink(missing_ok=True)
-        return [str(p) for p in made]
-
-    def convert(self, paths: list[str], kind: str) -> list[str]:
-        return [str(p) for p in self.svc.convert_made([Path(p) for p in paths], kind)]

@@ -49,7 +49,7 @@ def role_lines(lines):
     return [i for i, L in enumerate(lines) if re.search(r"성명\s*[가-힣]{2,}", L["text"]) and "대리인" not in squash(L["text"])]
 
 
-def format_ok(kind, v):
+def format_ok(kind, v, spec=None):
     """값의 모양이 필드 종류에 맞는가(서식 불문). 문장·설명이 답으로 나오면 걸린다."""
     if kind == "name":
         return bool(re.fullmatch(r"[가-힣]{2,20}", squash(v)))      # 법인 소유자("주식회사…개발")도 있어 20자까지
@@ -63,7 +63,7 @@ def format_ok(kind, v):
     if kind == "person":
         return 2 <= len(person_key(v)) <= 60 and not re.search(r"\d", v)
     if kind == "choice":
-        return v in CHOICES
+        return v in [c["value"] for c in (spec or {}).get("choices", [])]
     if kind in ("grade", "text") and ("\n" in v.strip() or len(v) > 80):     # 값 하나를 물었는데 문서 전체를 옮겨 적은 답
         return False
     if kind == "owners":
@@ -199,12 +199,19 @@ def governing(text, pos):
     return best, bend
 
 
+def decoy_text(spec):
+    """헷갈리는 날짜 자리 낱말을 사유 문구용으로(한글 낱말 앞 두 개, 없으면 앞 두 개)."""
+    words = spec.get("decoy_words", [])
+    ko = [w for w in words if re.search(r"[가-힣]", w)] or words
+    return "·".join(ko[:2]) or "다른 날짜"
+
+
 def check_field(kind, key, value, lines, spec=None):
     """-> dict(exists, state, label_ok(None=라벨 없음/해당 없음), kw(키워드로 확인함), ys(성명 줄 y), reason)
     state: pass / contradict(그 자리가 읽혔는데 값이 다름·답이 없음) / unknown(OCR이 그 부분을 못 읽어 판단 불가)
     spec: 양식의 칸 설정."""
     spec = spec or {}
-    v = clean(kind, value)
+    v = clean(kind, value, spec)
 
     def out(exists, state, label_ok=None, ys=None, reason="", kw=False, suggest=None):
         return {"exists": exists, "state": state, "label_ok": label_ok, "ys": ys, "reason": reason, "kw": kw, "suggest": suggest}
@@ -217,13 +224,15 @@ def check_field(kind, key, value, lines, spec=None):
         ok = ("있" in v) == expect
         return out(ok, "pass" if ok else "contradict", reason=f"{word} 키워드 " + ("있음" if expect else "없음"), kw=True)
     if kind == "choice":
-        if not format_ok(kind, v):
-            return out(False, "contradict", reason="문서 종류를 고르지 못함: " + v[:20])
-        # 위에서부터 처음 종류 낱말이 나온 줄(대개 제목)로 정한다. 칸 이름('합격연월일')에 끌려가지 않도록
-        seen = next(([val for words, val in CHOICE_WORDS if any(w in sq for w in words)] for sq in (squash(L["text"]).casefold() for L in lines)
-                     if any(w in sq for words, _ in CHOICE_WORDS for w in words)), [])
+        if not format_ok(kind, v, spec):
+            return out(False, "contradict", reason="정해 둔 값 중에서 고르지 못함: " + v[:20])
+        # 위에서부터 처음 값 낱말이 나온 줄(대개 제목)로 정한다. 칸 이름('합격연월일')에 끌려가지 않도록.
+        # default(맞는 값이 없을 때 고르는 '기타')는 페이지 낱말로 찾지 않는다
+        words = [(c["words"], c["value"]) for c in spec.get("choices", []) if c["value"] != spec.get("default")]
+        seen = next(([val for ws, val in words if any(w in sq for w in ws)] for sq in (squash(L["text"]).casefold() for L in lines)
+                     if any(w in sq for ws, _ in words for w in ws)), [])
         if not seen:
-            return out(False, "unknown", reason="페이지에서 증명서 종류 낱말을 못 찾음")
+            return out(False, "unknown", reason=f"페이지에서 '{spec.get('label', '값')}' 낱말을 못 찾음")
         ok = v == seen[0]
         return out(ok, "pass" if ok else "contradict", kw=True, reason="" if ok else f"페이지 낱말로는 {seen[0]}", suggest=None if ok else seen[0])
     if v in ("", "없음"):
@@ -232,7 +241,7 @@ def check_field(kind, key, value, lines, spec=None):
             has = next((w for w in words if w.casefold() in squash(" ".join(L["text"] for L in lines)).casefold()), None)
             return out(not has, "contradict" if has else "pass", reason=f"'없음'인데 페이지에 '{has}' 칸이 있음" if has else "", kw=True)
         return out(False, "contradict", reason="빈 값(B가 답하지 못함)")
-    if not format_ok(kind, v):
+    if not format_ok(kind, v, spec):
         why = "공유 지분 합이 1이 아님" if kind == "owners" and parse_owners(v) else "형식 불일치(" + kind + "): " + v[:20]
         suggest = None
         if kind == "owners" and len(parse_owners(v)) > 1:
@@ -267,7 +276,7 @@ def check_field(kind, key, value, lines, spec=None):
         if near:
             return out(False, "contradict", reason=f"페이지에는 연도가 다른 같은 날짜가 있음({near[0]})", suggest=near[0])
     if not occ and spec.get("need_on_page"):
-        return out(False, "contradict", reason="페이지에서 값을 못 찾음(증명서 칸은 페이지에 그대로 있어야 함)")
+        return out(False, "contradict", reason="페이지에서 값을 못 찾음(이 칸은 페이지에 그대로 있어야 함)")
     if spec.get("id") and occ:
         pat = re.compile(r"(?<![0-9A-Za-z])" + spaced(squash(v)) + r"(?![0-9A-Za-z])")
         if not any(pat.search(lines[i]["text"]) for i, _ in occ if i >= 0):
@@ -283,14 +292,14 @@ def check_field(kind, key, value, lines, spec=None):
             ds = [(y, mo, d) for i in near for y, mo, d, _ in any_dates(lines[i]["text"])]
             if occ and norm("date", v) < max(ds):
                 y, mo, d = max(ds)
-                return out(True, "contradict", reason="가장 최근 변동일이 아님", suggest=f"{y}-{mo:02d}-{d:02d}")
+                return out(True, "contradict", reason=f"'{spec['latest_near']}' 줄 근처의 가장 최근 날짜가 아님", suggest=f"{y}-{mo:02d}-{d:02d}")
     if spec.get("above_word") and occ:
         # 전유부분 면적: '공용부분' 제목 줄보다 위에 있어야 한다(아래는 계단실·주차장 같은 공용부분 면적)
         head = next((i for i, L in enumerate(lines) if spec["above_word"] in squash(L["text"])), None)
         if head is not None:
             occ = [o for o in occ if 0 <= o[0] < head]
     if spec.get("decoy_words") and occ and all(i >= 0 and any(w in squash(lines[i]["text"]).casefold() for w in spec["decoy_words"]) for i, _ in occ):
-        return out(True, "contradict", label_ok=False, reason="생년월일·발급일 자리의 날짜(취득일이 아닐 수 있음)")
+        return out(True, "contradict", label_ok=False, reason=f"{decoy_text(spec)} 자리의 날짜({spec.get('label', '이')} 칸 값이 아닐 수 있음)")
     if spec.get("last_row"):
         idx = [i for i, L in enumerate(lines) if spec["last_row"] in squash(L["text"])]
         last = idx[-1] if idx else None
@@ -300,7 +309,7 @@ def check_field(kind, key, value, lines, spec=None):
             if ds:
                 occ = [o for o in occ if o[1] == ds[0].start()]
                 if not occ:
-                    return out(False, "contradict", reason="소유자 줄의 첫 날짜(접수일)와 다름")
+                    return out(False, "contradict", reason=f"마지막 '{spec['last_row']}' 줄의 첫 날짜가 아님")
     if not occ:
         return out(False, "unknown", reason="페이지에서 값을 못 찾음")
     if spec.get("last_payment"):
@@ -309,7 +318,7 @@ def check_field(kind, key, value, lines, spec=None):
         pays = [tuple(int(x) for x in m.groups()) for L in lines if spec["last_payment"] in squash(L["text"]) for m in DATE_ANY.finditer(L["text"])]
         mine = tuple(int(x) for x in re.findall(r"\d+", v)[:3])
         if pays and mine < max(pays):
-            return out(True, "pass", label_ok=False, reason="잔금일보다 늦은 지급일이 있음(잔금은 마지막 지급)")
+            return out(True, "pass", label_ok=False, reason=f"'{spec['last_payment']}' 줄에 더 늦은 날짜가 있음(마지막 지급일이어야 함)")
     if all(i < 0 for i, _ in occ):
         return out(True, "pass")      # 여러 줄에 걸친 값: 존재만 확인
     al = spec.get("aliases")
@@ -445,19 +454,19 @@ def second_read_issue(key, kind, ans, ans2, strict=False, spec=None):
     strict: 두 번 읽기(joint) 방식 — 두 값이 다르기만 하면 사용자 판단(2026-10-28 사용자 결정)."""
     if ans2 is None or ans is None:
         return ""
-    a, b = norm(kind, clean(kind, ans)), norm(kind, clean(kind, ans2))
+    a, b = norm(kind, clean(kind, ans, spec)), norm(kind, clean(kind, ans2, spec))
     if not a or not b or a == b:
         return ""
     if strict:
-        return f"두 번 읽은 값이 다름({clean(kind, ans)[:20]} / {clean(kind, ans2)[:20]})"
+        return f"두 번 읽은 값이 다름({clean(kind, ans, spec)[:20]} / {clean(kind, ans2, spec)[:20]})"
     if kind not in NAME_KINDS:
-        if kind != "flag" and clean(kind, ans2).strip() in ("", "없음"):
+        if kind != "flag" and clean(kind, ans2, spec).strip() in ("", "없음"):
             return ""       # 다시 읽기에서 값을 못 찾은 것은 반대 증거가 아니다
         if isinstance(a, str) and isinstance(b, str) and squash(unicodedata.normalize("NFKC", a)) == squash(unicodedata.normalize("NFKC", b)):
             return ""       # 모양만 다른 같은 글자(Ⅰ/I, 전각 숫자, 띄어쓰기)
         if (spec or {}).get("id") and alnum_key(a) == alnum_key(b):
             return ""
-        return f"OCR 없이 다시 읽은 값과 다름({clean(kind, ans2)[:30]})"
+        return f"OCR 없이 다시 읽은 값과 다름({clean(kind, ans2, spec)[:30]})"
     if kind == "name" and len(a) == len(b) and 1 <= edit_distance(jamo(a), jamo(b)) <= 3:
         return f"이름 {'한 획' if edit_distance(jamo(a), jamo(b)) == 1 else '몇 획'} 차이 — 사용자 확인({a} / {b})"
     if kind == "person":      # 한글 이름은 한 획 차이만(외국어 이름은 ③ 확대 재판독이 맡는다)
@@ -518,7 +527,7 @@ def zoom_number(model, proc, img, lines, kind, value):
         ds = any_dates(zoom_raw(model, proc, img, part))
         got = next((d for d in ds if d[:3] == want), ds[0] if ds else None)
         return f"{got[0]}-{got[1]:02d}-{got[2]:02d}" if got else None
-    if spec["kind"] == "grade":
+    if kind == "grade":
         want = grade_key(value)
         part = next((q for q in parts if any(grade_key(t) == want for t in re.split(r"[\s:：,/|]+", q["text"]))), None)
         if part is None:
@@ -599,10 +608,10 @@ def compute_checks(gt, docs, answers, cache, crops=None):
             if (f["kind"] in NAME_KINDS and c["reason"].startswith("페이지에서 값을 못 찾음")
                     and (r.get("zoom") and not zoom_issue(key, f["kind"], r["ans"], r["zoom"], sp)
                          or r.get("strict2") and r.get("ans2")
-                         and norm(f["kind"], clean(f["kind"], r["ans2"])) == norm(f["kind"], clean(f["kind"], r["ans"])))):
+                         and norm(f["kind"], clean(f["kind"], r["ans2"], sp)) == norm(f["kind"], clean(f["kind"], r["ans"], sp)))):
                 # OCR이 흐리게 읽어 페이지 글자에 없어도, 칸을 확대해 따로 읽은 값이 같으면 인쇄된 값으로 본다
                 c = {**c, "exists": True, "state": "pass", "reason": ""}
-            vals[key], per[key] = clean(f["kind"], r["ans"]), c
+            vals[key], per[key] = clean(f["kind"], r["ans"], sp), c
             if c["ys"] is not None:
                 ys[key] = c["ys"]
         rules = doc["rules"] if "rules" in doc else builtin_forms().get(doc["doc_type"], {}).get("rules", [])
@@ -615,7 +624,7 @@ def compute_checks(gt, docs, answers, cache, crops=None):
             if "agree" not in cm or cm["agree"]:
                 return False
             f = doc["fields"][k]
-            seen = cm["crop"] not in VOCAB and format_ok(f["kind"], cm["crop"]) and occurrences(f["kind"], cm["crop"], cache[doc["pages"][f["page"] - 1]])
+            seen = cm["crop"] not in VOCAB and format_ok(f["kind"], cm["crop"], sps.get(k)) and occurrences(f["kind"], cm["crop"], cache[doc["pages"][f["page"] - 1]])
             return bool(seen)
         crop_bad = {k: crop_disagrees(k) for k in per}
         second = {k: zoom_issue(k, doc["fields"][k]["kind"], answers[(name, k)].get("ans"), answers[(name, k)].get("zoom"), sps[k])
@@ -643,4 +652,4 @@ def compute_checks(gt, docs, answers, cache, crops=None):
 # 함수 안에서만 쓰는 다른 기능의 이름: 맨 아래에서 불러온다(서로 부르는 기능끼리 순환해도 됨)
 from Fuc.path_b_vlm.path_b_vlm import ask  # noqa: E402,F401
 from Fuc.read_pipeline.read_pipeline import LANG_LABEL  # noqa: E402,F401
-from Fuc.scoring.scoring import CHOICES, CHOICE_WORDS, NUM_RE, SHARE_RE, clean, grade_key, norm, owners_text, parse_owners  # noqa: E402,F401
+from Fuc.scoring.scoring import NUM_RE, SHARE_RE, clean, grade_key, norm, owners_text, parse_owners  # noqa: E402,F401

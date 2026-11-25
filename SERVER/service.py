@@ -8,7 +8,6 @@
 
 오류는 화면에 그대로 보여 줄 수 있는 한국어 문구의 ValueError로 알린다.
 """
-import json
 import threading
 import zipfile
 from pathlib import Path
@@ -199,9 +198,9 @@ class DesktopService:
         """여러 문서의 칸 이름(처음 나온 순서, 중복 없이): 한 번에 내보내기에서 고를 목록."""
         return list(dict.fromkeys(f["label"] for d in docs for f in d["fields"]))
 
-    # ── 문서 만들기(모델 필요 없음) ──
+    # ── 문서 관리(워드 양식, 모델 필요 없음) ──
     def list_templates(self) -> list[dict]:
-        """문서 만들기에서 고를 양식: 사용자가 넣은 워드 양식만(고정 기본 양식은 없음, 2026-11-06 결정).
+        """문서 관리 화면의 양식: 사용자가 넣은 워드 양식만(고정 기본 양식은 없음, 2026-11-06 결정).
         -> [{"id", "name", "kind": "docx", "doc_type": None, "path"}]"""
         folder = bd.forms_dir()
         docx = sorted(folder.glob("*.docx")) if folder and folder.is_dir() else []
@@ -237,165 +236,3 @@ class DesktopService:
         except (OSError, KeyError, zipfile.BadZipFile, UnicodeDecodeError) as err:
             raise ValueError(f"워드 양식을 읽을 수 없음 — {Path(template).name} ({err})") from err
 
-    def prepare_make(self, data_path: Path, template: Path, header: bool = False) -> list[dict]:
-        """데이터 → 만들 문서 목록(아직 파일은 안 씀). 표의 한 줄이 문서 하나이고, 값은 왼쪽부터 양식 빈칸에 순서대로 들어간다.
-        칸 이름·파일 이름은 보지 않는다. header=True면 첫 줄은 제목 줄로 보고 건너뛴다(화면의 체크박스, JSON은 상관없음).
-        -> [{name, values{"1. 빈칸 이름": 값}(순서대로), problems[], notes, template_path}]"""
-        data_path = Path(data_path)
-        if not data_path.exists():
-            raise ValueError(f"데이터 파일이 없음 — {data_path}")
-        if not template:
-            raise ValueError("양식을 고르세요 — '새 양식 추가…'로 워드 양식(.docx)을 넣을 수 있어요")
-        if not Path(template).exists() or Path(template).suffix.lower() != ".docx":
-            raise ValueError(f"양식은 있는 .docx 파일이어야 함 — {template}")
-        slots = self.template_slots(template)
-        if not slots:
-            raise ValueError("양식에 빈칸이 없어요 — 값이 들어갈 자리에 {{칸 이름}}을 적어 두세요")
-        try:
-            rows = self._data_rows(data_path)
-        except (OSError, ValueError, IndexError, KeyError, zipfile.BadZipFile, UnicodeDecodeError) as e:
-            raise ValueError(f"데이터 파일을 읽을 수 없음 — {data_path.name} ({type(e).__name__}: {e})") from e
-        rows = [[str(c).strip() for c in r] for r in rows if any(str(c).strip() for c in r)]
-        if header and data_path.suffix.lower() != ".json":
-            rows = rows[1:]
-        if not rows:
-            raise ValueError("데이터가 비어 있음")
-        keys = [f"{i}. {s}" if s else f"{i}" for i, s in enumerate(slots, 1)]
-        docs = []
-        for n, r in enumerate(rows, 1):
-            notes = []
-            if len(r) > len(keys):
-                notes.append(f"값이 빈칸보다 {len(r) - len(keys)}개 많아 뒤쪽 값은 뺐어요")
-            elif len(r) < len(keys):
-                notes.append(f"값이 {len(keys) - len(r)}개 모자라 그 빈칸은 비워 둬요")
-            docs.append({"name": f"문서{n}", "no": n, "doc_type": None, "values": dict(zip(keys, r + [""] * len(keys))),
-                         "filled": [], "problems": [], "notes": notes, "template_path": str(template)})
-        return docs
-
-    @staticmethod
-    def _data_rows(path: Path) -> list[list]:
-        """데이터 파일 → 행 목록. JSON(읽기 결과)은 문서마다 칸 값들을 순서대로 한 줄로."""
-        if path.suffix.lower() == ".json":
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return [[f.get("value", "") for f in d.get("fields", [])] for d in (data if isinstance(data, list) else [data])]
-        return bd.read_table(path)
-
-    def preview_data(self, data_path: Path, n: int = 8) -> list[list[str]]:
-        """데이터 파일 앞부분 n줄(불러오기 창에서 '첫 줄은 제목'을 정하기 전에 보여 줌)."""
-        data_path = Path(data_path)
-        try:
-            rows = self._data_rows(data_path)
-        except (OSError, ValueError, IndexError, KeyError, zipfile.BadZipFile, UnicodeDecodeError) as e:
-            raise ValueError(f"데이터 파일을 읽을 수 없음 — {data_path.name} ({type(e).__name__}: {e})") from e
-        return [[str(c).strip() for c in r] for r in rows if any(str(c).strip() for c in r)][:n]
-
-    def preview_make(self, doc: dict, values: dict) -> dict:
-        """고칠 곳 표시: 비어 있는 빈칸마다 마크. -> {"pages": [], "marks": [{"key", "label", "reason", "page": None, "box": None}]}"""
-        return {"pages": [], "marks": [{"key": k, "label": k, "reason": "비어 있음 — 빈칸으로 만들어져요", "page": None, "box": None}
-                                       for k in doc["values"] if not str(values.get(k, "")).strip()]}
-
-    @staticmethod
-    def _todo(docs, posted):
-        by = {d["name"]: d for d in docs}
-        return [(by[p["name"]], p.get("values") or {}) for p in posted if p.get("make") and p.get("name") in by]
-
-    @staticmethod
-    def _made_name(name: str) -> str:
-        """사용자가 정한 파일 이름에서 윈도에서 못 쓰는 글자를 뺀다."""
-        import re
-        name = re.sub(r'[\\/:*?"<>|]', "", name or "").strip(" .") or "문서"
-        return "_" + name if name.upper() in bd.WIN_RESERVED else name
-
-    def made_paths(self, docs: list[dict], posted: list[dict], out_dir: Path, name: str = "문서") -> list[Path]:
-        """만들 문서 파일 경로들: 저장 폴더\\{이름}{줄 번호}.docx. 화면이 같은 이름 파일이 있는지 보고 덮어쓸지 묻는다."""
-        base = self._made_name(name)
-        return [Path(out_dir) / f"{base}{d.get('no', i)}.docx" for i, (d, _) in enumerate(self._todo(docs, posted), 1)]
-
-    def submit_make(self, docs: list[dict], posted: list[dict], out_dir: Path, name: str = "문서") -> dict:
-        """확인·수정한 값으로 문서를 만든다. posted: [{"name", "make": bool, "values": {칸 키: 값}}].
-        값은 prepare_make가 정한 빈칸 순서대로 양식에 들어간다. 양식은 prepare_make에서 고른 것.
-        -> {"problems": {}, "results": [{"name", "path"(Path), "message"("")}]}. 파일을 만들다 실패하면 ValueError."""
-        todo = self._todo(docs, posted)
-        paths = self.made_paths(docs, posted, out_dir, name)
-        if not todo:
-            raise ValueError("만들 문서를 하나 이상 고르세요")
-        tps = {d["template_path"] for d, _ in todo}
-        if len(tps) != 1 or not next(iter(tps)):
-            raise ValueError("양식을 고르고 데이터를 다시 불러오세요")
-        tp, out_dir, results = Path(tps.pop()), Path(out_dir), []
-        try:
-            out_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as err:
-            raise ValueError(f"결과 폴더를 만들 수 없음 — {out_dir} ({err.strerror or err})") from err
-        for (d, vals), path in zip(todo, paths):
-            seq = iter([str(vals.get(k, d["values"][k])) for k in d["values"]])
-            try:
-                bd.fill_docx(tp, lambda _name, s=seq: next(s, ""), path)
-            except (OSError, KeyError, zipfile.BadZipFile, UnicodeDecodeError) as e:
-                raise ValueError(f"{d['name']} 문서를 만들지 못함({type(e).__name__}: {e})") from e
-            results.append({"name": d["name"], "path": path, "message": ""})
-        return {"problems": {}, "results": results}
-
-    def convert_made(self, paths: list[Path], kind: str, names: list[str] | None = None) -> list[Path]:
-        """만든 워드 문서(.docx)를 같은 폴더에 PDF("pdf") 또는 쪽마다 PNG 그림("png")으로 저장한다. -> 새로 만든 파일들.
-        names: 문서마다 사용자가 정한 파일 이름(확장자 없이, 없으면 워드 파일 이름). PNG는 이름.png, 여러 쪽이면 이름_1.png …
-        PDF는 이 PC의 Microsoft Word로 바꾼다(Word가 없으면 ValueError). 그림은 그 PDF를 쪽마다 그린다."""
-        if kind not in ("pdf", "png"):
-            raise ValueError(f"PDF나 그림(png)만 고를 수 있어요 — {kind}")
-        docs = [Path(p) for p in paths if Path(p).suffix.lower() == ".docx" and Path(p).is_file()]
-        if not docs:
-            raise ValueError("내보낼 문서가 없어요 — 먼저 [만들기]를 누르세요")
-        names = list(names or [])
-        pdfs = [p.with_name(self._made_name(names[i]) + ".pdf") if i < len(names) else p.with_suffix(".pdf") for i, p in enumerate(docs)]
-        _word_to_pdf(docs, pdfs)
-        if kind == "pdf":
-            return pdfs
-        import pymupdf as fitz
-        out = []
-        try:
-            for pdf in pdfs:
-                with fitz.open(pdf) as d:
-                    for i, page in enumerate(d, 1):
-                        png = pdf.with_name(f"{pdf.stem}.png" if len(d) == 1 else f"{pdf.stem}_{i}.png")
-                        page.get_pixmap(dpi=150).save(png)
-                        out.append(png)
-        finally:
-            for pdf in pdfs:      # 그림만 원했으니 중간 PDF는 지운다
-                pdf.unlink(missing_ok=True)
-        return out
-
-
-WORD_TO_PDF_PS = r"""
-$ErrorActionPreference = 'Stop'
-$jobs = Get-Content -Raw -Encoding UTF8 $args[0] | ConvertFrom-Json
-$word = New-Object -ComObject Word.Application
-try {
-  $word.Visible = $false
-  $word.DisplayAlerts = 0
-  foreach ($j in $jobs) {
-    $doc = $word.Documents.Open($j.src, $false, $true)
-    try { $doc.ExportAsFixedFormat($j.dst, 17) } finally { $doc.Close(0) }
-  }
-} finally { $word.Quit() }
-"""
-
-
-def _word_to_pdf(docs: list[Path], pdfs: list[Path]) -> None:
-    """Word를 화면 없이 띄워 docx → PDF. 경로는 한글이 깨지지 않게 UTF-8 JSON 파일로 넘긴다."""
-    import subprocess
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmp:
-        script, jobs = Path(tmp) / "to_pdf.ps1", Path(tmp) / "jobs.json"
-        script.write_text(WORD_TO_PDF_PS, encoding="utf-8-sig")
-        jobs.write_text(json.dumps([{"src": str(s.resolve()), "dst": str(d.resolve())} for s, d in zip(docs, pdfs)],
-                                   ensure_ascii=False), encoding="utf-8")
-        try:
-            r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                                "-File", str(script), str(jobs)], capture_output=True, timeout=60 + 30 * len(docs),
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except (OSError, subprocess.TimeoutExpired) as err:
-            raise ValueError(f"PDF로 바꾸지 못했어요 — {err}") from err
-    if r.returncode != 0 or not all(p.exists() for p in pdfs):
-        msg = r.stderr.decode("cp949", "replace").strip().splitlines()
-        hint = "이 PC에 Microsoft Word가 있어야 PDF·그림으로 내보낼 수 있어요" if "80040154" in r.stderr.decode("cp949", "replace") else ""
-        raise ValueError(f"PDF로 바꾸지 못했어요 — {hint or (msg[0] if msg else '알 수 없는 오류')}")
